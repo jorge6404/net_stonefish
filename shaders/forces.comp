@@ -1,0 +1,46 @@
+// a. Fuerzas sobre cada nudo con el estado del subpaso anterior: peso − empuje y Morison de sus tramos, limitado.
+// Escribe la velocidad nueva aparte (VNEW): nadie mueve un nudo hasta predict.comp.
+#version 430
+#include "xpbd_common.glsl"
+
+vec3 morison(vec3 p0, vec3 p1, vec3 v0, vec3 v1, vec3 w, float diameter)
+{
+  const vec3 axis = p1 - p0;
+  const float len = length(axis);
+  if (len < 1e-9) {
+    return vec3(0.0);
+  }
+  const vec3 t = axis / len;
+  const vec3 u = w - 0.5 * (v0 + v1);
+  const vec3 ut = dot(u, t) * t;
+  const vec3 un = u - ut;
+  return 0.5 * rho * diameter * len * (cn * length(un) * un + ct * PI * length(ut) * ut);
+}
+
+void main()
+{
+  const uint k = gl_GlobalInvocationID.x;
+  if (k >= n) {
+    return;
+  }
+  const float w = X[k].w;
+  if (w <= 0.0) {
+    VNEW[k] = vec4(0.0);
+    return;
+  }
+  const vec3 x = X[k].xyz, v = V[k].xyz;
+  vec3 drag = vec3(0.0);
+  for (int a = ADJ_BEGIN[k]; a < ADJ_BEGIN[k + 1]; ++a) {
+    const int i = ADJ_LINKS[a];
+    const int na = LINKS[i].x, nb = LINKS[i].y;
+    drag += 0.5 * morison(X[na].xyz, X[nb].xyz, V[na].xyz, V[nb].xyz,
+                          0.5 * (water_at(X[na].xyz) + water_at(X[nb].xyz)), LPROPS[i].y);
+  }
+  // Arrastre limitado para no pasar de la velocidad del agua en un subpaso
+  const float inertial = NPROPS[k].z;
+  const float limit = inertial * length(water_at(x) - v) / h;
+  const float norm = length(drag);
+  drag = limit <= 0.0 ? vec3(0.0) : (norm > limit ? drag * (limit / norm) : drag);
+  const vec3 f = drag + vec3(0.0, 0.0, (NPROPS[k].x - rho * NPROPS[k].y) * g);
+  VNEW[k] = vec4(v + h * w * f, 0.0);
+}

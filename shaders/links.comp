@@ -1,0 +1,28 @@
+// b. Tramos de un color: restricción de distancia XPBD, una iteración, solo a tracción (un hilo no empuja).
+// En un color ningún nudo se repite: cada hilo corrige sus dos nudos sin conflictos.
+#version 430
+#include "xpbd_common.glsl"
+
+void main()
+{
+  if (gl_GlobalInvocationID.x >= count) {
+    return;
+  }
+  const uint i = first + gl_GlobalInvocationID.x;
+  const int a = LINKS[i].x, b = LINKS[i].y;
+  const vec3 d = X[b].xyz - X[a].xyz;
+  const float len = length(d);
+  const float c = len - LPROPS[i].x;
+  const float wa = X[a].w, wb = X[b].w;
+  const float alpha = compliance / (h * h);
+  if (len < 1e-9 || c <= 0.0 || wa + wb + alpha <= 0.0) {
+    return;
+  }
+  const vec3 dir = d / len;
+  const float dl = -c / (wa + wb + alpha);
+  const vec3 fix_a = -wa * dl * dir, fix_b = wb * dl * dir;
+  X[a].xyz += fix_a;
+  DX[a].xyz += fix_a;
+  X[b].xyz += fix_b;
+  DX[b].xyz += fix_b;
+}

@@ -1,0 +1,16 @@
+// a. Predicción: v nueva, dx = h·v, x += dx
+#version 430
+#include "xpbd_common.glsl"
+
+void main()
+{
+  const uint k = gl_GlobalInvocationID.x;
+  if (k >= n) {
+    return;
+  }
+  const vec3 v = VNEW[k].xyz;
+  const vec3 dx = h * v;
+  V[k] = vec4(v, 0.0);
+  DX[k] = vec4(dx, 0.0);
+  X[k].xyz += dx;
+}
