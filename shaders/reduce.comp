@@ -1,0 +1,39 @@
+// Suma del registro de contactos de un tick por cuerpo: un grupo por cuerpo, sus hilos recorren el registro y
+// una reducción en memoria compartida. REACTIONS[2b] = Σ m·Δx, REACTIONS[2b + 1] = Σ r × m·Δx.
+#version 430
+#define CONTACT_SHADER
+#include "xpbd_common.glsl"
+#include "contact_common.glsl"
+
+layout(std430, binding = B_REACTIONS) writeonly buffer Reactions { vec4 REACTIONS[]; };
+
+shared vec3 sum_m[GROUP_SIZE];
+shared vec3 sum_a[GROUP_SIZE];
+
+void main()
+{
+  const uint b = gl_WorkGroupID.x;
+  const uint t = gl_LocalInvocationID.x;
+  const uint entries = min(LOG_COUNT, log_capacity);
+  vec3 m = vec3(0.0), an = vec3(0.0);
+  for (uint i = t; i < entries; i += uint(GROUP_SIZE)) {
+    if (int(LOG[i].momentum.w) == int(b)) {
+      m += LOG[i].momentum.xyz;
+      an += LOG[i].angular.xyz;
+    }
+  }
+  sum_m[t] = m;
+  sum_a[t] = an;
+  barrier();
+  for (uint stride = uint(GROUP_SIZE) / 2u; stride > 0u; stride >>= 1u) {
+    if (t < stride) {
+      sum_m[t] += sum_m[t + stride];
+      sum_a[t] += sum_a[t + stride];
+    }
+    barrier();
+  }
+  if (t == 0u) {
+    REACTIONS[2u * b] = vec4(sum_m[0], 0.0);
+    REACTIONS[2u * b + 1u] = vec4(sum_a[0], 0.0);
+  }
+}

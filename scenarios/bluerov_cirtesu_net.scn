@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!-- Tanque CIRTESU con el BlueROV y la red blanda. La red, las boyas y las anclas las construye
+     stonefish_net_simulator desde config/net.yaml; aquí solo van los looks que usa. -->
+<scenario>
+    <include file="$(find bluerov_stonefish)/scenarios/bluerov_cirtesu_arucos.scn"/>
+
+    <!-- Sin <materials>: Stonefish solo lee el primero y los <include> se pegan al final, así que uno aquí
+         taparía el del escenario base. Los de las boyas y los bloques (Polyethylene, Concrete) los crea
+         NetSimulationManager. La red es un cuerpo blando: su masa y su contacto salen de config/net.yaml. -->
+
+    <looks>
+        <look name="net_twine" rgb="0.00 0.00 0.00" roughness="0.9"/>
+        <look name="net_rope" rgb="0.00 0.00 0.00" roughness="0.9"/>
+        <look name="net_lead" gray="0.0" roughness="0.6" metalness="0.3"/>
+        <look name="net_concrete" gray="0.6" roughness="1.0"/>
+        <look name="net_buoy" rgb="1.0 1.0 1.0" roughness="0.4" texture="$(find stonefish_net)/data/buoy/buoy.png"/>
+    </looks>
+</scenario>

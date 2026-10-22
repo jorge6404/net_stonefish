@@ -1,0 +1,42 @@
+# Red pequeña del spike (spec: docs/superpowers/specs/2026-10-15-red-blanda-parte1-design.md).
+# Metros, kilogramos, NED del mundo de Stonefish (z hacia abajo).
+net:        {width: 1.0, height: 1.0, bar: 0.05, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140}
+pose:       {x: -5.0, y_center: 0.0, z_top: 0.35}   # relinga superior; boyas 20 cm por encima, en la superficie
+frame_rope: {diameter: 0.02, density: 950}
+leads:      {spacing: 0.5, mass: 0.5}
+buoys:      {spacing: 1.0, dropper: 0.20, mass: 0.5}   # boya hueca: ~5,8 kg de empuje neto
+# Fondeo: ancla en el suelo, `upstream` aguas arriba (−x) y `outward` hacia fuera en y de su esquina.
+# bottom: esquinas inferiores (con holgura); top: superiores (tensas: mantienen la red abierta a lo ancho)
+mooring:    {floor_z: 4.8, upstream: 1.0, block_height: 0.20,
+             bottom: {outward: 0.5, slack: 1.05}, top: {outward: 1.0, slack: 1.0}}
+hydro:      {cn: 1.2, ct: 0.01, added_mass: 1.0, water_density: 1000.0, current_grid: 0.5}
+# backend: gpu (XPBD en compute shaders: substeps, compliance) o bullet (cuerpo blando: iterations,
+# contact_hardness). friction: μ con el suelo; con las boyas el rozamiento es nulo (Stonefish deja a 0 el de sus rígidos)
+solver:     {backend: gpu, substeps: 20, compliance: 0.0, iterations: 20, contact_hardness: 0.3, margin: 0.005, damping: 0.01, friction: 0.5}   # contacto blando: afinar en Stonefish
+# Agujeros aleatorios (misma semilla → misma red rota; launch: damage_seed:=N)
+damage:     {seed: 1, tears: 0, tear_min_meshes: 2, tear_max_meshes: 15, stub_fraction: 0.3, loose_fraction: 0.0}
+# Enlaces de robot que tocan la red con contacto propio (caja redondeada en el marco del enlace; Bullet solo
+# mira los nudos y el robot pasaría entre ellos). friction: μ entre la red y ese enlace. Uno que no exista
+# en el escenario se ignora con un aviso.
+robot_contact:
+  - {robot: bluerov2, link: Vehicle, half_extents: [0.29, 0.24, 0.14], rounding: 0.04,
+     center_offset: [0.0, 0.0, 0.015], friction: 0.5}   # BlueROV2 Heavy
+# Los demás enlaces de robot del escenario: caja envolvente automática de su forma de colisión
+# (redondeo = rounding_fraction × su semieje menor). Los de robot_contact mandan sobre estos.
+robot_contact_auto: {enabled: true, rounding_fraction: 0.15, friction: 0.5}
+# Igual para los sólidos dinámicos que no son robots (boyas y objetos sueltos): sin esto, Bullet solo mira los
+# nudos y sin rozamiento. El orinque de una boya no choca con su propia boya.
+solid_contact_auto: {enabled: true, rounding_fraction: 0.15, friction: 0.5}
+# Pinzas que agarran la red (solo backend gpu). Un nudo, o el punto medio de un tramo, que queda a menos de
+# grip_margin de las cajas de dos dedos a la vez se ata al primero de ellos (en el orden de fingers) hasta que la
+# pinza se abre: la distancia entre los centros de esos dos dedos crece más de release_gap desde que agarró.
+# Los dedos usan su caja de robot_contact o de robot_contact_auto.
+grippers: []
+#  - {robot: bluerov2, fingers: [gripper/finger1, gripper/finger2], grip_margin: 0.004, release_gap: 0.005}
+# Baldosas dormidas: los cuadrados de tile_size m quietos y lejos de los robots se congelan y no se calculan.
+# Se duerme tras settle_time s con |v| < sleep_speed y a más de sleep_radius m de los robots; despierta a menos de
+# wake_radius m o si el nudo de fuera de un tramo de su borde se mueve más de wake_shift m desde que se durmió.
+sleep:      {enabled: false, tile_size: 0.5, wake_radius: 1.0, sleep_radius: 1.5, sleep_speed: 0.01, settle_time: 2.0,
+             wake_shift: 0.03}
+# Resumen por segundo en stderr (velocidades, inversiones de velocidad, nudos en el suelo, boyas)
+diagnostics: {enabled: false}

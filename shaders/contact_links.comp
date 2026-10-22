@@ -1,0 +1,46 @@
+// c'. Contacto del punto más hundido de cada tramo de un color con los cuerpos (aunque ninguno de sus extremos esté
+// dentro). En un color ningún nudo se repite: cada hilo corrige sus dos nudos sin conflictos.
+#version 430
+#define CONTACT_SHADER
+#include "xpbd_common.glsl"
+#include "contact_common.glsl"
+
+void main()
+{
+  if (gl_GlobalInvocationID.x >= count) {
+    return;
+  }
+  const uint i = first + gl_GlobalInvocationID.x;
+  const int a = LINKS[i].x, c = LINKS[i].y;
+  // Descarte rápido: si no cruza ninguna caja y no recuerda nada, no hay nada que hacer ni que borrar
+  const int used = LINK_MEM_USED[i];
+  bool near = false;
+  for (uint b = 0u; b < body_count && !near; ++b) {
+    near = !excluded(uint(a), b) && !excluded(uint(c), b) &&
+           segment_in_box_bounds(BODIES[substep * body_count + b], X[a].xyz, X[c].xyz);
+  }
+  if (!near && used == 0) {
+    return;
+  }
+
+  vec4 old_slots[MAX_BODIES], new_slots[MAX_BODIES];
+  for (int j = 0; j < MAX_BODIES; ++j) {
+    old_slots[j] = used > 0 ? LINK_MEM[MAX_BODIES * i + j] : vec4(0.0, 0.0, 0.0, -1.0);
+    new_slots[j] = vec4(0.0, 0.0, 0.0, -1.0);
+  }
+  int now_used = 0;
+  for (uint b = 0u; b < body_count; ++b) {
+    if (excluded(uint(a), b) || excluded(uint(c), b)) continue;
+    const BodyData B = BODIES[substep * body_count + b];
+    if (!segment_in_box_bounds(B, X[a].xyz, X[c].xyz)) continue;
+    const float u = deepest_on_segment(B, X[a].xyz, X[c].xyz);
+    if (u <= END || u >= 1.0 - END) continue;
+    vec3 exit_dir;
+    if (contact_point(b, B, old_slots, a, c, u, exit_dir)) {
+      remember(new_slots, b, exit_dir);
+      now_used = min(now_used + 1, MAX_BODIES);
+    }
+  }
+  for (int j = 0; j < MAX_BODIES; ++j) LINK_MEM[MAX_BODIES * i + j] = new_slots[j];
+  LINK_MEM_USED[i] = now_used;
+}

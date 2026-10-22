@@ -1,0 +1,30 @@
+// d. Suelo z <= floor_z con rozamiento de Coulomb, y e. velocidades v = dx/h amortiguadas
+#version 430
+#include "xpbd_common.glsl"
+
+void main()
+{
+  const uint k = gl_GlobalInvocationID.x;
+  if (k >= n) {
+    return;
+  }
+  if (X[k].w <= 0.0) {
+    V[k] = vec4(0.0);
+    return;
+  }
+  vec3 x = X[k].xyz, dx = DX[k].xyz;
+  if (x.z > floor_z) {
+    const float depth = x.z - floor_z;
+    x.z = floor_z;
+    dx.z -= depth;
+    // Coulomb sobre el desplazamiento horizontal del subpaso: como mucho μ × lo corregido en la normal
+    const vec2 slip = dx.xy;
+    const float limit = friction * depth, norm = length(slip);
+    const vec2 fix = norm <= limit ? slip : slip * (limit / norm);
+    x.xy -= fix;
+    dx.xy -= fix;
+    X[k].xyz = x;
+    DX[k].xyz = dx;
+  }
+  V[k] = vec4(dx / h * (1.0 - damping), 0.0);
+}

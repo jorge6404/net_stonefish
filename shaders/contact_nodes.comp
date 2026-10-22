@@ -1,0 +1,42 @@
+// c'. Contacto de cada nudo con los cuerpos, en su pose de este subpaso. Rehace la memoria de contacto del nudo:
+// solo quedan los cuerpos con los que ha tocado ahora.
+#version 430
+#define CONTACT_SHADER
+#include "xpbd_common.glsl"
+#include "contact_common.glsl"
+
+void main()
+{
+  const uint k = gl_GlobalInvocationID.x;
+  if (k >= n) {
+    return;
+  }
+  // Descarte rápido: si no cae en ninguna caja y no recuerda nada, no hay nada que hacer ni que borrar
+  const int used = NODE_MEM_USED[k];
+  bool near = false;
+  for (uint b = 0u; b < body_count && !near; ++b) {
+    near = !excluded(k, b) && point_in_box_bounds(BODIES[substep * body_count + b], X[k].xyz);
+  }
+  if (!near && used == 0) {
+    return;
+  }
+
+  vec4 old_slots[MAX_BODIES], new_slots[MAX_BODIES];
+  for (int j = 0; j < MAX_BODIES; ++j) {
+    old_slots[j] = used > 0 ? NODE_MEM[MAX_BODIES * k + j] : vec4(0.0, 0.0, 0.0, -1.0);
+    new_slots[j] = vec4(0.0, 0.0, 0.0, -1.0);
+  }
+  int now_used = 0;
+  for (uint b = 0u; b < body_count; ++b) {
+    if (excluded(k, b)) continue;
+    const BodyData B = BODIES[substep * body_count + b];
+    if (!point_in_box_bounds(B, X[k].xyz)) continue;
+    vec3 exit_dir;
+    if (contact_point(b, B, old_slots, int(k), int(k), 0.0, exit_dir)) {
+      remember(new_slots, b, exit_dir);
+      now_used = min(now_used + 1, MAX_BODIES);
+    }
+  }
+  for (int j = 0; j < MAX_BODIES; ++j) NODE_MEM[MAX_BODIES * k + j] = new_slots[j];
+  NODE_MEM_USED[k] = now_used;
+}
