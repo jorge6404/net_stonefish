@@ -11,7 +11,8 @@ void add_droppers(const NetConfig& c, const Lattice& lat, NetTopology& t);
 
 // Una línea por esquina (inferiores con c.mooring.bottom, superiores con c.mooring.top); rellena t.marks.moorings
 // en el orden de Landmarks::moorings.
-// Lanza std::invalid_argument("mooring.floor_z: …") si un ancla no queda por debajo de su esquina.
+// Lanza std::invalid_argument("mooring.floor_z: …") si un ancla no queda por debajo de su esquina, o
+// ("mooring.wall_y: …") si la pared no queda por fuera de ella.
 void add_moorings(const NetConfig& c, const Lattice& lat, NetTopology& t);
 
 }  // namespace stonefish_net::core::topology

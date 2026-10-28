@@ -99,12 +99,17 @@ struct GripScene
   // Lo que se mide
   float settled_stretch = 0.f, stretch = 0.f, attach = 0.f;  // estiramiento al asentarse y máx; distancia al punto atado
   size_t held_close = 0;                                      // nudos agarrados al acabar de cerrar
+  size_t held_pull = 0;                                       // y al acabar de tirar
+  int slipped = 0;                                            // nudos soltados porque el tirón pasa de max_pull
+  double max_pull_seen = 0.0;                                 // el mayor tirón de la pinza en un tick, N
   std::set<int> ever_held;
   std::vector<Eigen::Vector3f> away_start;
   Eigen::Vector3d grip_dx = Eigen::Vector3d::Zero();  // Σ de lo acumulado por los anclajes del agarre
   std::vector<int> first_held;                        // los nudos del primer tick en que agarra
 
-  GripScene(const core::NetTopology& t, NetTick f);
+  // g: la pinza (cuerpos 0 y 1); substeps: los del tick de f, para el tirón (reaction_force) que mira max_pull
+  GripScene(const core::NetTopology& t, NetTick f, const core::Gripper& g = gripper(), int substeps = 20);
+  int substeps;
 
   void settle(double seconds);
   Eigen::Vector3d nearest_node(const Eigen::Vector3d& target) const;  // el nudo libre más cercano

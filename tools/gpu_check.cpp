@@ -2,8 +2,10 @@
 // PRIME, __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia). Lo que no necesita GPU está en test/.
 //
 //   gpu_check gpu <net.yaml>      los shaders dan lo mismo que la referencia (core/xpbd_ref), también con cuerpos
-//                                 que empujan la red, anclas que se mueven, nudos que ignoran cuerpos y el agarre
-//   gpu_check bench <net.yaml>    ms por tick de la red en la GPU como en el simulador (GPU_CHECK_RATE Hz, 200)
+//                                 que empujan la red, chorros de propulsores, anclas que se mueven, nudos que ignoran
+//                                 cuerpos y el agarre
+//   gpu_check bench <net.yaml>    ms por tick de la red en la GPU como en el simulador (GPU_CHECK_RATE Hz, 200;
+//                                 GPU_CHECK_JETS chorros de propulsores, 0)
 //   gpu_check shake <net.yaml>    vibración de la red asentada, con boyas fijas y con boyas que giran
 //
 // Sale con 0 si todo está bien y con 1 y el primer fallo si no.
@@ -60,14 +62,16 @@ struct GpuSession
 
 // Los mismos ticks con la referencia y con los shaders; compara posiciones, lo acumulado por los anclajes y la
 // reacción sobre la caja. box_speed > 0: una caja empuja la red 0,3 m a esa velocidad desde 0,35 m antes de su
-// centro y luego se para 0,4 s; si no, 100 ticks sin caja.
+// centro y luego se para 0,4 s; si no, 100 ticks sin caja. jets: chorros de propulsores que se suman a la corriente
+// (en la referencia, en la función del agua; en la GPU, en water_at).
 int check_gpu(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSession& gpu, bool with_anchors,
-              double box_speed, const char* name)
+              double box_speed, const char* name, const std::vector<core::Jet>& jets = {})
 {
   const core::GpuLayout L = core::make_gpu_layout(topo, core::color_links(topo));
   const core::XpbdParams p = params(cfg);
   const int n = cfg.solver.substeps;
-  const auto water = [](const Eigen::Vector3f&) { return kCurrent; };
+  constexpr float kSpread = 0.1f;
+  const auto water = [&jets](const Eigen::Vector3f& x) { return Eigen::Vector3f(kCurrent + core::jet_velocity(jets, x, kSpread)); };
   const auto anchors = with_anchors ? fixed_buoys(topo) : std::vector<core::Anchor>{};
   const Eigen::Vector3d middle = net_middle(cfg);
 
@@ -80,6 +84,7 @@ int check_gpu(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSess
   solver.set_current_grid(Eigen::Vector3f(-10.f, -10.f, -1.f), 10.f, 3, 3, 2,
                           std::vector<Eigen::Vector3f>(3 * 3 * 2, kCurrent));
   solver.set_anchors(anchors);
+  solver.set_jets(jets, kSpread);
 
   // Un solo subpaso: si las cuentas son las mismas, solo difiere el redondeo de float. Con caja, la caja ya roza
   // la red (su cara frontal 2 cm más allá), para que haya contactos desde el primer subpaso. Tiene que ser un roce,
@@ -103,6 +108,7 @@ int check_gpu(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSess
     stonefish_net::gpu::GpuXpbd one(*gpu.gl, L);
     one.set_current_grid(Eigen::Vector3f(-10.f, -10.f, -1.f), 10.f, 3, 3, 2, std::vector<Eigen::Vector3f>(3 * 3 * 2, kCurrent));
     one.set_anchors(anchors);
+    one.set_jets(jets, kSpread);
     one.set_bodies(bodies, n);
     one.substep(p, 0, n);
     one.read_back(gpu_x, gpu_dx, gpu_offset, gpu_reactions);
@@ -188,7 +194,11 @@ int check_gpu_moving_anchor(const core::NetConfig& cfg, GpuSession& gpu)
 {
   const int n = cfg.solver.substeps;
   const core::GpuLayout L = hanging_chain(5);
-  const core::XpbdParams p = dry(cfg);
+  core::XpbdParams p = dry(cfg);
+  // Con el amortiguamiento global fijo: sin agua y sin él (config/net.yaml lo deja en 0) la cadena oscila libre y
+  // amplifica el redondeo de float, distinto en la GPU y en la CPU, hasta 7e-5 m en 0,1 s. Aquí se mira si sigue al
+  // ancla, no eso.
+  p.damping = core::substep_damping(0.01, n);
   const Eigen::Vector3f u(0.1f, 0.f, 0.05f);
   core::XpbdState s = core::xpbd_init(L);
   core::ContactMemory mem = core::contact_memory(L);
@@ -388,6 +398,14 @@ int bench(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSession&
     solver.set_current_grid(Eigen::Vector3f(-10.f, -10.f, -1.f), 10.f, 3, 3, 2,
                             std::vector<Eigen::Vector3f>(3 * 3 * 2, kCurrent));
     solver.set_anchors(fixed_buoys(topo));
+    // GPU_CHECK_JETS=N: N chorros (8 en el BlueROV Heavy) de hélices de 0,1 m que empujan 20 N, 0,5 m aguas arriba de la
+    // red y repartidos en y, subidos cada tick como en GpuSolver
+    std::vector<core::Jet> jets;
+    const int jet_count = std::getenv("GPU_CHECK_JETS") ? std::atoi(std::getenv("GPU_CHECK_JETS")) : 0;
+    for (int j = 0; j < jet_count; ++j) {
+      jets.push_back(*core::jet_from_thrust(middle + Eigen::Vector3d(-0.5, 0.15 * (j - 0.5 * (jet_count - 1)), 0.0),
+                                            -Eigen::Vector3d::UnitX(), 20.0, 0.1, cfg.hydro.water_density));
+    }
     std::vector<Eigen::Vector3d> centers;
     for (int b = 0; b < 7; ++b) centers.push_back(middle + Eigen::Vector3d(push && b == 0 ? -0.35 : -2.0, 0.6 * b, 0.0));
     const int moving = static_cast<int>(std::lround(0.3 / 0.5 / dt));
@@ -404,6 +422,7 @@ int bench(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSession&
       }
       const auto t0 = std::chrono::steady_clock::now();
       solver.set_bodies(bodies, n);
+      if (!jets.empty()) solver.set_jets(jets, static_cast<float>(cfg.thruster_jets.spread));
       for (int i = 0; i < n; ++i) solver.substep(p, i, n);
       const auto t1 = std::chrono::steady_clock::now();
       solver.read_back(x, dx, offset, reactions);
@@ -580,6 +599,12 @@ int shake(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSession&
               x.size(), n, rate, 1e3 * dt / n, vsum / samples, vmax, 100.0 * moving / samples,
               moving ? 100.0 * flips / moving : 0.0, 1e3 * std::sqrt(jitter2 / samples), 1e3 * jmax, worst,
               kinds[static_cast<int>(topo.nodes[worst].kind)], L.adj_begin[worst + 1] - L.adj_begin[worst], x[worst].z());
+  float x_min = x[0].x(), x_max = x[0].x();
+  for (const auto& q : x) {
+    x_min = std::min(x_min, q.x());
+    x_max = std::max(x_max, q.x());
+  }
+  std::printf("shake: red asentada entre x %.2f y %.2f m (la relinga empezó en x %.2f)\n", x_min, x_max, cfg.pose.x);
   for (const bool rigid : {false, true}) {
     const BuoyShake b = shake_buoys(cfg, topo, gpu, dt, rigid, settle + 1.0);
     std::printf("shake con boyas que giran (%s): el ojal invierte la velocidad en %.2f de cada tick, |v| máx del ojal %.3f "
@@ -607,6 +632,14 @@ int main(int argc, char** argv)
       rc |= check_gpu(cfg, topo, gpu, false, 0.0, "no_bodies");
       rc |= check_gpu(cfg, topo, gpu, true, 0.5, "push_box");
       rc |= check_gpu(cfg, topo, gpu, true, 2.0, "fast_box");
+      // Dos hélices de 0,1 m a 0,6 m aguas arriba del centro de la red, a ±0,3 m en y, que echan el agua contra ella
+      // (empujan 20 N en −x)
+      std::vector<core::Jet> jets;
+      for (const double y : {-0.3, 0.3}) {
+        jets.push_back(*core::jet_from_thrust(net_middle(cfg) + Eigen::Vector3d(-0.6, y, 0.0), -Eigen::Vector3d::UnitX(),
+                                              20.0, 0.1, cfg.hydro.water_density));
+      }
+      rc |= check_gpu(cfg, topo, gpu, true, 0.0, "jets", jets);
       rc |= check_gpu_moving_anchor(cfg, gpu);
       rc |= check_gpu_exclusion(cfg, topo, gpu);
       rc |= check_gpu_grip(cfg, topo, gpu);

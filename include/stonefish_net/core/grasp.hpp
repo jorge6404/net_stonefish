@@ -40,6 +40,7 @@ struct Gripper
 {
   double grip_margin, release_gap;  // m
   std::vector<size_t> fingers;      // índices de cuerpo de contacto, al menos dos
+  double max_pull = 0;              // N: si lo agarrado tira más en un tick, el hilo resbala (slip); 0 = sin límite
 };
 
 // Lo que hizo una pinza en un update: nudos que agarró, que soltó y los que tiene después
@@ -54,6 +55,7 @@ struct GripAnchor
 {
   Anchor anchor;
   size_t body;
+  size_t gripper;  // la pinza que lo agarra
 };
 
 class Grasp
@@ -71,6 +73,11 @@ public:
   // end[b], la pose del cuerpo al final del tick (to), con inv_mass = 0. Omite los de un dedo con pose no finita,
   // al inicio o al final.
   std::vector<GripAnchor> anchors(const std::vector<Eigen::Isometry3d>& end) const;
+
+  // Post-tick, con el tirón de cada pinza en el tick (pull[g] = |Σ fuerza de sus nudos agarrados sobre sus dedos|, N):
+  // la pinza con 0 < max_pull < pull lo suelta todo, como al abrirse (el hilo resbala entre los dedos y no se vuelve a
+  // agarrar mientras siga pellizcado). Solo devuelve las pinzas que han soltado algo.
+  std::vector<GraspEvent> slip(const std::vector<double>& pull);
 
   // Añade a los dedos de cada pinza los nudos que no tocan: los que tiene agarrados y los soltados que aún los solapan
   void exclude_held(std::vector<ContactBody>& bodies) const;

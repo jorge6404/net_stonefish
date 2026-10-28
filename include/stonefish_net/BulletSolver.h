@@ -29,6 +29,7 @@ namespace sf
 class Entity;
 class SimulationManager;
 class SolidEntity;
+class Thruster;
 }  // namespace sf
 
 namespace stonefish_net
@@ -45,9 +46,10 @@ public:
   // nudos). buoys: una por topo.marks.buoys, en orden; el extremo superior de cada orinque se ancla a la suya.
   // ignored: objetos con los que la red no colisiona (mallas cóncavas como el tanque: el SDF de Bullet solo mide
   // formas convexas y con una malla da contactos falsos que lanzan los nudos).
+  // thrusters: los propulsores cuyo chorro empuja la red (vacío con thruster_jets.enabled false).
   BulletSolver(const core::NetTopology& topo, const core::NetConfig& cfg, sf::SimulationManager* sm, sf::Entity* owner,
                SolidContacts& solids, const std::vector<sf::SolidEntity*>& buoys,
-               const std::vector<const btCollisionObject*>& ignored);
+               const std::vector<const btCollisionObject*>& ignored, std::vector<sf::Thruster*> thrusters);
 
   void begin_step(double dt) override;
   void end_step(double dt) override;
@@ -62,6 +64,7 @@ private:
   sf::SimulationManager* sm_;
   SolidContacts& solids_;
   std::vector<sf::SolidEntity*> buoys_;
+  std::vector<sf::Thruster*> thrusters_;
   btSoftBody* body_ = nullptr;
   RobotContact robot_contact_;
   NetSleep sleep_;  // qué nudos y tramos se calculan en cada subpaso

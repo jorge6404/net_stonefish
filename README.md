@@ -78,14 +78,15 @@ Unidades del SI y ejes NED del mundo de Stonefish (**z hacia abajo**). Todas las
 
 | Sección | Qué controla |
 |---|---|
-| `net` | Tamaño (`width` × `height`), lado del rombo (`bar`), ángulo de apertura, diámetro y densidad del hilo |
+| `net` | Tamaño (`width` × `height`), lado del rombo (`bar`), ángulo de apertura, diámetro, densidad y módulo de Young del hilo (`twine_modulus`) y diámetro del nudo (`knot_diameter`) |
 | `pose` | Posición: `x`, centro en `y` y profundidad de la relinga superior (`z_top`) |
-| `frame_rope` | Diámetro y densidad del cabo del marco, los orinques y el fondeo |
+| `frame_rope` | Diámetro, densidad y módulo de Young (`modulus`) del cabo del marco, los orinques y el fondeo |
 | `leads` | Separación y masa de los plomos del borde inferior |
-| `buoys` | Separación, largo del orinque y masa de las boyas |
-| `mooring` | Profundidad del suelo (`floor_z`), posición de las anclas y holgura de cada línea |
-| `hydro` | Coeficientes de arrastre normal y tangencial, masa añadida, densidad del agua y rejilla de la corriente (`current_grid`, GPU) |
-| `solver` | `backend` (`gpu` o `bullet`); subpasos y flexibilidad del hilo (GPU); iteraciones, dureza y margen del contacto (Bullet); amortiguamiento y rozamiento con el suelo |
+| `buoys` | Si hay boyas (`enabled`, opcional, `true` por defecto), su separación, el largo del orinque y su masa. Con `enabled: false` no hay ni boyas ni orinques, y los demás campos no hacen falta. La red solo queda sujeta por el fondeo y por el empuje del cabo del marco |
+| `mooring` | Profundidad del suelo (`floor_z`) y, para las esquinas inferiores (`bottom`) y las superiores (`top`), a dónde va su línea (`to`) y su holgura (`slack`). Con `to: floor` (por defecto) va a un ancla en el suelo, desplazada `upstream` aguas arriba y `outward` hacia fuera. Con `to: wall` se ata a la pared lateral del tanque, en `y = ±wall_y` y a la altura `wall_z`, frente a su esquina y sin bloque. Con `to: none` no hay línea. La red del tanque CIRTESU cuelga de las dos paredes por sus esquinas superiores, sin fondeo abajo |
+| `hydro` | Coeficientes de arrastre normal y tangencial, masa añadida, densidad del agua, rejilla de la corriente (`current_grid`, GPU) y viscosidad para Cn(Re) (`viscosity`) |
+| `thruster_jets` | El chorro de los propulsores de los robots sobre la red (`enabled`, `spread`) |
+| `solver` | `backend` (`gpu` o `bullet`); subpasos y amortiguamiento interno de los tramos (`damping_time`, GPU); iteraciones, dureza y margen del contacto (Bullet); amortiguamiento global y rozamiento con el suelo |
 | `damage` | Agujeros: semilla, número de rotos, su tamaño y fracción de hilos sueltos cortados |
 | `robot_contact` | Enlaces de robot con su caja de contacto medida a mano |
 | `robot_contact_auto` | Contacto automático para el resto de enlaces de robot |
@@ -123,9 +124,40 @@ grippers:
 - **Suelta:** cuando la distancia entre los centros de las cajas de esos dos dedos crece más de `release_gap` m desde que agarró (los centros de las cajas, no los orígenes de los enlaces, que en una pinza de dedos que giran están en la articulación y no se separan). Mientras lo tiene, y hasta que se separan después de soltarlo, los dedos de esa pinza no chocan con ese nudo ni con sus tramos, y esa pinza no lo vuelve a agarrar mientras siga pellizcado.
 - En la terminal sale una línea por cada agarre y cada suelta: `[stonefish_net] pinza bluerov2/gripper/finger1+gripper/finger2: agarra 3 nudos (total 3)` y `… suelta 3 nudos (total 0)`.
 - Avisos al arrancar: si un dedo no existe o no tiene contacto propio, la pinza se ignora. Si `solver.backend` es `bullet`, `grippers` se ignora entero. Solo los 32 primeros cuerpos de contacto (índices 0 a 31) pueden ignorar nudos: un dedo más allá agarra pero choca con lo que sujeta, y una boya más allá choca con su orinque; las dos cosas salen avisadas.
+- **Resbala** (opcional, `max_pull` en N): si en un tick lo agarrado tira de los dedos más que eso, el hilo resbala entre ellos y la pinza lo suelta todo, como al abrirse (y no lo vuelve a agarrar mientras siga pellizcado). Así la fuerza que nota el robot se satura como con una pinza real. Sale `… resbala con 12.3 N (max_pull 10.0 N), suelta 3 nudos`. Sin `max_pull` (o con 0), no resbala nunca.
 - Sin `grippers` en el YAML (o con `grippers: []`), todo funciona como antes.
 
 La pinza de `bluerov_stonefish/scenarios/bluerov.scn` sigue comentada y es una sola malla: para usarla hace falta una pinza de dos o más enlaces. Queda para una fase posterior (con las bridas): que una brida cerrada abrace los hilos sin expulsarlos (contacto por pieza de un cuerpo compuesto), que una brida de pocos gramos no oscile con la reacción en el tick siguiente, y el contacto con cables de Stonefish.
+
+### Física del hilo, los nudos y el agua
+
+Para que la fuerza que nota el robot salga de la física y no del solver (spec: `docs/superpowers/specs/2026-10-27-fuerza-realismo-design.md`). Nada de esto añade lanzamientos de shader: son cuentas dentro de los que ya había.
+
+- **Hilo y cabos elásticos** (`net.twine_modulus`, `frame_rope.modulus`, Pa): cada tramo tiene su flexibilidad L / (E · π d²/4), la del hilo o la del cabo. Con `.inf`, inextensible (como antes). Los valores de `config/net.yaml` (1 GPa el hilo de poliamida, 0,5 GPa el cabo) son estimaciones: con un dato medido de la red real, cámbialos. Con estos módulos el error del solver (que estira algo los tramos más cargados) sigue siendo del mismo orden que el estiramiento físico. Solo con `gpu`: Bullet usa su propia rigidez.
+- **Amortiguamiento interno** (`solver.damping_time`, s): cada tramo se amortigua como un Kelvin–Voigt (β = damping_time · rigidez), solo a tracción: frena las vibraciones del hilo sin hacer fuerza neta, así que no llega al robot. El global `solver.damping` frena cada nudo respecto al suelo y sí la hace (a 5 cm/s es del orden de un cuarto del arrastre): `config/net.yaml` lo deja en 0, y la red se asienta igual (test `Xpbd.SettlesWithoutGlobalDamping`). Solo con `gpu`.
+- **Nudos** (`net.knot_diameter`, m): cada nudo de hilo es una esfera de ese diámetro con su masa y su volumen (con la densidad del hilo) y su arrastre ½ ρ Cd (π/4) d² |u| u.
+- **Cn(Re)** (`hydro.viscosity`, m²/s): con ν > 0, el coeficiente normal del hilo es el de un cilindro según su número de Reynolds, Cn = 1 + 10 · Re^(−2/3) (White), y el del nudo el de una esfera, Cd = 24/Re + 6/(1 + √Re) + 0,4: a velocidades bajas el hilo frena más que con `hydro.cn` constante. Con 0, `hydro.cn` y Cd = 0,47.
+- **Chorro de las hélices** (`thruster_jets`): el agua que echa cada propulsor de los robots empuja la red, aunque no la toque. Con su empuje, su marco y el diámetro de su hélice (teoría de cantidad de movimiento: la estela sale a √(2|T|/(ρA)) por un chorro contraído de D/(2√2) de radio), un chorro redondo turbulento con un núcleo de 6,2 diámetros y que luego decae como 1/x, con perfil gaussiano de anchura `spread` · x (0,1 por defecto) y hasta 50 diámetros. El agua va contra el empuje. Se suma a la corriente, también con `bullet`. Hasta 16 propulsores (sale `Red: chorro de N propulsores sobre la red`).
+
+### Fuerza de la red sobre los robots
+
+En cada tick el simulador publica la fuerza que la red hace sobre cada robot y cada pinza, como `geometry_msgs/WrenchStamped`, con los dos backends:
+
+| Topic | Qué suma | Marco (`frame_id`) |
+|---|---|---|
+| `/stonefish_net/wrench/<robot>` | todos los enlaces del robot con contacto propio, pinza incluida | enlace base del robot (`<robot>/base_link`) |
+| `/stonefish_net/wrench/<robot>/gripper_<k>` | los dedos de la pinza `k` de `grippers` (en el orden del YAML; solo con `gpu`) | su primer dedo, al que se atan los nudos agarrados (`<robot>/<dedo>`) |
+
+- Es lo que mediría un sensor de fuerza montado en ese marco: la fuerza en sus ejes y el par respecto a su origen (el marco O de Stonefish, no el centro de gravedad).
+- Es la reacción que la red acaba de calcular (`SolidContacts::pending`) y que el robot recibe durante el tick siguiente: la del contacto con las cajas y, con pinzas, el tirón de los nudos agarrados. No incluye nada que no pase por la red (el agua sobre el robot, sus propulsores).
+- El sello es el reloj del nodo, el mismo que usan los sensores de `stonefish_ros2`, así que cuadra con las imágenes de las cámaras.
+- Se publica siempre, aunque nadie escuche, para poder grabarlo con `ros2 bag`. Al arrancar sale una línea `Red: fuerza sobre … cuerpos en …` por topic.
+
+El robot del escenario del tanque se llama `bluerov2` (ver la nota de [Contacto con los robots y los sólidos](#contacto-con-los-robots-y-los-sólidos)):
+
+```bash
+ros2 topic echo /stonefish_net/wrench/bluerov2
+```
 
 ### Baldosas dormidas
 
@@ -147,7 +179,7 @@ Qué hay que saber:
 Con `solver.backend: gpu` (lo que viene en los YAML), la red se calcula con compute shaders de OpenGL 4.3 en la misma GPU que dibuja Stonefish. No necesita nada que no pida ya Stonefish: ni CUDA ni librerías nuevas. Así se puede bajar `net.bar` mucho más que con Bullet.
 
 - Cada tick de Stonefish se parte en `solver.substeps` subpasos de XPBD, con una pasada por los tramos en cada uno. Más subpasos = hilos menos elásticos: con 20 a 200 Hz (el `simulation_rate` del launch; subpasos de 0,25 ms), el hilo más cargado de `net.yaml` se estira en torno a un 1 %. Cada subpaso son unos 17 lanzamientos de shader seguidos: el coste va casi en proporción a los subpasos por segundo, no al tamaño de la red.
-- `solver.compliance` es la flexibilidad del hilo (m/N): 0 es inextensible.
+- La flexibilidad de cada tramo sale de su módulo de Young (`net.twine_modulus`, `frame_rope.modulus`) y su amortiguamiento interno de `solver.damping_time` (ver [Física del hilo, los nudos y el agua](#física-del-hilo-los-nudos-y-el-agua)).
 - **El hilo solo tira, no empuja**, como uno de verdad. Con Bullet los tramos también resistían la compresión.
 - La corriente del océano se muestrea cada tick en una rejilla de `hydro.current_grid` m alrededor de la red.
 - Los robots, las boyas y los sólidos sueltos chocan con contacto propio (cajas redondeadas) y notan la reacción en el tick siguiente.
@@ -214,6 +246,7 @@ Y en tu copia de `net.yaml`, ajusta a la escena:
 
 - `pose`: dónde va la red.
 - `mooring.floor_z`: la profundidad del suelo. La red no choca con mallas cóncavas (como el tanque): el suelo es un plano a esa profundidad.
+- `mooring.wall_y`, si la atas a las paredes: tampoco choca con ellas. Sin fondeo abajo, la corriente lleva aguas abajo la parte inferior de la red (en CIRTESU, con 0,2 m/s, ~1,5 m), así que deja sitio hasta la pared de aguas abajo. Pon también `wall_z` bajo el agua (z ≥ 0): el solver no tiene superficie libre y trata como sumergido todo nudo.
 - `robot_contact`: los robots de tu escenario, o `[]` y deja que lo haga `robot_contact_auto`.
 
 ## Problemas frecuentes
@@ -245,7 +278,8 @@ include/, src/
   gl/, gpu/   net_gpu: contexto de OpenGL de cálculo y el subpaso XPBD en la GPU (sin ROS)
   *.cpp       adaptador a Stonefish: NetSolver con GpuSolver y BulletSolver, NetEntity (dibujo), NetForces
               (enganche al tick), SolidContacts (cuerpos con contacto propio), RobotContact (su contacto en la
-              CPU con Bullet), NetSleep (baldosas dormidas), NetSimulationManager (monta la escena) y el ejecutable
+              CPU con Bullet), NetSleep (baldosas dormidas), NetWrenches (fuerza sobre los robots y las pinzas),
+              NetSimulationManager (monta la escena) y el ejecutable
 shaders/      compute shaders de la red en GPU (bindings y constantes los define GpuXpbd.cpp al compilarlos)
 test/         tests de colcon, su red (net_test.yaml) y las escenas de prueba comunes con gpu_check (support/)
 tools/        gpu_check (comprobaciones del solver en GPU) y buoy_asset.py

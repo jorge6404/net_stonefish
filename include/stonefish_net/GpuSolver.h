@@ -41,6 +41,7 @@ namespace sf
 {
 class SimulationManager;
 class SolidEntity;
+class Thruster;
 }  // namespace sf
 
 namespace stonefish_net
@@ -59,9 +60,10 @@ public:
   // solids: los cuerpos que tocan la red (SolidContacts), que tiene que vivir más que el solver.
   // buoys: una por topo.marks.buoys, en orden; eye: el ojal en el marco de la boya.
   // window: la ventana de SDL de Stonefish (en BuildScenario, la del contexto activo del hilo principal).
+  // thrusters: los propulsores cuyo chorro empuja la red (vacío con thruster_jets.enabled false).
   GpuSolver(const core::NetTopology& topo, const core::NetConfig& cfg, sf::SimulationManager* sm, SolidContacts& solids,
             std::vector<sf::SolidEntity*> buoys, const Eigen::Vector3d& eye, SDL_Window* window, std::string shader_dir,
-            std::vector<Gripper> grippers);
+            std::vector<Gripper> grippers, std::vector<sf::Thruster*> thrusters);
 
   void begin_step(double dt) override;
   void end_step(double dt) override;
@@ -92,6 +94,7 @@ private:
   std::vector<Eigen::Vector3f> eye_start_;   // ojal de cada boya al inicio del tick
   std::vector<Gripper> grippers_;
   core::Grasp grasp_;
+  std::vector<sf::Thruster*> thrusters_;
   std::unique_ptr<NetDiagnostics> diagnostics_;  // nullptr si diagnostics.enabled es false
   bool warned_grid_ = false;
 };

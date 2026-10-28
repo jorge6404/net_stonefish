@@ -23,6 +23,7 @@ struct Node
   double inertial_mass = 0;  // mass + masa añadida del agua
   double volume = 0;         // m³ (empuje)
   bool fixed = false;        // extremo del fondeo: masa 0 en Bullet
+  double knot_diameter = 0;  // m: esfera del nudo (net.knot_diameter en los nudos de hilo), su arrastre; 0 = ninguno
 };
 
 struct Link
@@ -33,6 +34,7 @@ struct Link
   double rest_length;
   double diameter;
   LinkKind kind;
+  double compliance = 0;  // m/N: L / (E · π d²/4) con el módulo de su material; 0 = inextensible
 };
 
 struct Strand
@@ -50,7 +52,8 @@ struct BuoyMount
 struct MooringLine
 {
   int corner;                  // esquina de la red de la que sale
-  Eigen::Vector3d block_base;  // base del bloque de anclaje, en el suelo
+  bool on_floor;               // con bloque de anclaje en el suelo; si no, atada a la pared
+  Eigen::Vector3d block_base;  // base del bloque de anclaje, en el suelo (solo on_floor)
 };
 
 // Todo índice de nudo que no es parte del grafo vive aquí: al recortar o renumerar el grafo
@@ -59,7 +62,7 @@ struct Landmarks
 {
   std::vector<BuoyMount> buoys;
   std::vector<int> leads;
-  std::vector<MooringLine> moorings;  // inferior izq., inferior der., superior izq., superior der.
+  std::vector<MooringLine> moorings;  // inferior izq., inferior der., superior izq., superior der. (las que haya)
 
   void remap(const std::vector<int>& old_to_new);
 };

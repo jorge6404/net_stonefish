@@ -14,9 +14,9 @@ namespace stonefish_net::core
 struct GpuLayout
 {
   std::vector<float> x0;          // 4 por nudo: posición inicial, w = 1 / masa inercial (0 si es fijo)
-  std::vector<float> node_props;  // 4 por nudo: masa, volumen, masa inercial, 0
+  std::vector<float> node_props;  // 4 por nudo: masa, volumen, masa inercial, Ø del nudo
   std::vector<int> links;         // 2 por tramo: nudos a, b
-  std::vector<float> link_props;  // 4 por tramo: longitud natural, diámetro, 0, 0
+  std::vector<float> link_props;  // 4 por tramo: longitud natural, diámetro, compliance (m/N), 0
   std::vector<int> adj_begin;     // nudos + 1: tramos del nudo k en adj_links[adj_begin[k], adj_begin[k + 1])
   std::vector<int> adj_links;     // índices de tramo del layout
   std::vector<int> color_begin;   // = LinkColoring::color_begin

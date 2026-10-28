@@ -14,6 +14,7 @@
 
 #include "convert.h"
 #include "pose_now.h"
+#include "thruster_jets.h"
 #include "stonefish_net/core/coloring.hpp"
 #include "stonefish_net/core/current_grid.hpp"
 
@@ -44,7 +45,8 @@ double ms_between(std::chrono::steady_clock::time_point a, std::chrono::steady_c
 
 GpuSolver::GpuSolver(const core::NetTopology& topo, const core::NetConfig& cfg, sf::SimulationManager* sm,
                      SolidContacts& solids, std::vector<sf::SolidEntity*> buoys, const Eigen::Vector3d& eye,
-                     SDL_Window* window, std::string shader_dir, std::vector<Gripper> grippers)
+                     SDL_Window* window, std::string shader_dir, std::vector<Gripper> grippers,
+                     std::vector<sf::Thruster*> thrusters)
 : topo_(topo),
   cfg_(cfg),
   sm_(sm),
@@ -55,6 +57,7 @@ GpuSolver::GpuSolver(const core::NetTopology& topo, const core::NetConfig& cfg, 
   gl_(window, std::move(shader_dir)),
   grippers_(std::move(grippers)),
   grasp_(topo, gripper_specs(grippers_), buoy_nodes(topo)),
+  thrusters_(std::move(thrusters)),
   diagnostics_(cfg.diagnostics.enabled ? std::make_unique<NetDiagnostics>() : nullptr)
 {
   for (const auto& n : topo_.nodes) positions_.push_back(n.position.cast<float>());
@@ -187,6 +190,10 @@ void GpuSolver::end_step(double dt)
   }
   xpbd_->set_anchors(anchors);
   xpbd_->set_bodies(bodies, n);
+  // El chorro de cada propulsor con su empuje y su marco al final del tick
+  if (!thrusters_.empty()) {
+    xpbd_->set_jets(thruster_jets(thrusters_, cfg_.hydro.water_density), static_cast<float>(cfg_.thruster_jets.spread));
+  }
 
   core::XpbdParams p{};
   p.h = static_cast<float>(dt / n);
@@ -194,8 +201,9 @@ void GpuSolver::end_step(double dt)
   p.g = static_cast<float>(sm_->getGravity().length());
   p.cn = static_cast<float>(cfg_.hydro.cn);
   p.ct = static_cast<float>(cfg_.hydro.ct);
-  p.compliance = static_cast<float>(cfg_.solver.compliance);
+  p.nu = static_cast<float>(cfg_.hydro.viscosity);
   p.damping = core::substep_damping(cfg_.solver.damping, n);
+  p.damping_time = static_cast<float>(cfg_.solver.damping_time);
   p.friction = static_cast<float>(cfg_.solver.friction);
   p.floor_z = static_cast<float>(cfg_.mooring.floor_z);
   const auto issued = std::chrono::steady_clock::now();
@@ -208,9 +216,20 @@ void GpuSolver::end_step(double dt)
   // Los cuerpos reciben en el tick siguiente lo contrario de lo que la red cambió su cantidad de movimiento; cada
   // dedo, además, el tirón de sus nudos agarrados en su punto atado
   solids_.set_reactions(reactions_, dt, n);
+  std::vector<Eigen::Vector3d> pull(grippers_.size(), Eigen::Vector3d::Zero());
   for (size_t j = 0; j < grips.size(); ++j) {
-    const Eigen::Vector3d pull = anchor_dx_[buoys_.size() + j].cast<double>();
-    solids_.add_reaction(grips[j].body, core::reaction_force(pull, dt, n), grips[j].anchor.to.cast<double>());
+    const Eigen::Vector3d force = core::reaction_force(anchor_dx_[buoys_.size() + j].cast<double>(), dt, n);
+    solids_.add_reaction(grips[j].body, force, grips[j].anchor.to.cast<double>());
+    pull[grips[j].gripper] += force;
+  }
+  // La pinza que tira más que su max_pull deja resbalar el hilo
+  if (!grippers_.empty()) {
+    std::vector<double> pull_n;
+    for (const auto& f : pull) pull_n.push_back(f.norm());
+    for (const auto& e : grasp_.slip(pull_n)) {
+      std::fprintf(stderr, "[stonefish_net] pinza %s: resbala con %.1f N (max_pull %.1f N), suelta %d nudos\n",
+                   grippers_[e.gripper].name.c_str(), pull_n[e.gripper], grippers_[e.gripper].spec.max_pull, e.released);
+    }
   }
   if (diagnostics_) {
     sample_diagnostics(lever, dt, ms_between(issued, read), ms_between(read, done));

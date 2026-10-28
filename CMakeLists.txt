@@ -25,6 +25,8 @@ add_library(net_core STATIC
   src/core/coloring.cpp
   src/core/gpu_layout.cpp
   src/core/xpbd.cpp
+  src/core/wrench.cpp
+  src/core/jet.cpp
   src/core/xpbd_ref.cpp
   src/core/current_grid.cpp
   src/core/realtime.cpp
@@ -64,6 +66,7 @@ add_library(stonefish_net_adapter STATIC
   src/SolidContacts.cpp
   src/NetSleep.cpp
   src/NetSimulationManager.cpp
+  src/NetWrenches.cpp
   src/diagnostics.cpp
 )
 target_include_directories(stonefish_net_adapter PUBLIC
@@ -94,7 +97,7 @@ target_link_libraries(gpu_check net_gpu net_test_scene)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   # Las de la red completa con el XPBD de referencia tardan minutos
-  foreach(name test_config test_topology test_realtime test_xpbd test_grasp)
+  foreach(name test_config test_topology test_realtime test_xpbd test_grasp test_wrench test_hydro test_jet)
     ament_add_gtest(${name} test/${name}.cpp TIMEOUT 900)
     target_link_libraries(${name} net_test_scene)
   endforeach()
