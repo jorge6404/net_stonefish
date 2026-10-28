@@ -11,7 +11,8 @@ GpuLayout make_gpu_layout(const NetTopology& topo, const LinkColoring& coloring)
     L.x0.insert(L.x0.end(), {static_cast<float>(n.position.x()), static_cast<float>(n.position.y()),
                              static_cast<float>(n.position.z()), w});
     L.node_props.insert(L.node_props.end(), {static_cast<float>(n.mass), static_cast<float>(n.volume),
-                                             static_cast<float>(n.inertial_mass), 0.f});
+                                             static_cast<float>(n.inertial_mass),
+                                             static_cast<float>(n.knot_diameter)});
   }
   std::vector<int> new_index(topo.links.size());
   for (size_t i = 0; i < coloring.order.size(); ++i) {
@@ -19,7 +20,8 @@ GpuLayout make_gpu_layout(const NetTopology& topo, const LinkColoring& coloring)
     const auto& l = topo.links[static_cast<size_t>(j)];
     new_index[static_cast<size_t>(j)] = static_cast<int>(i);
     L.links.insert(L.links.end(), {l.a, l.b});
-    L.link_props.insert(L.link_props.end(), {static_cast<float>(l.rest_length), static_cast<float>(l.diameter), 0.f, 0.f});
+    L.link_props.insert(L.link_props.end(), {static_cast<float>(l.rest_length), static_cast<float>(l.diameter),
+                                             static_cast<float>(l.compliance), 0.f});
   }
   const Adjacency adj = node_links(topo);
   L.adj_begin = adj.begin;

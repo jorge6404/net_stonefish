@@ -14,14 +14,6 @@ namespace stonefish_net
 {
 namespace
 {
-Eigen::Isometry3d isometry(const btTransform& t)
-{
-  Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
-  iso.linear() = eig(t.getBasis());
-  iso.translation() = eig(t.getOrigin());
-  return iso;
-}
-
 // Amplía [lo, hi] con la forma `shape` colocada con `t` (marco de la forma → marco de la caja). Las convexas
 // van por puntos soporte (caja exacta aunque estén giradas); las compuestas, hija a hija; el resto (mallas
 // cóncavas), con su AABB de Bullet.
@@ -141,6 +133,14 @@ void SolidContacts::apply_reactions()
       bodies_[b].solid->ApplyTorque(bt(torque_[b]));
     }
   }
+}
+
+std::vector<core::Wrench> SolidContacts::pending() const
+{
+  std::vector<core::Wrench> out;
+  out.reserve(bodies_.size());
+  for (size_t b = 0; b < bodies_.size(); ++b) out.push_back({force_[b], torque_[b]});
+  return out;
 }
 
 }  // namespace stonefish_net

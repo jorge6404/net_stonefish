@@ -14,6 +14,7 @@
 #include <Eigen/Geometry>
 
 #include "stonefish_net/core/contact.hpp"
+#include "stonefish_net/core/wrench.hpp"
 #include "stonefish_net/core/xpbd.hpp"
 
 namespace sf
@@ -62,6 +63,9 @@ public:
 
   // Pre-tick: aplica a cada cuerpo la reacción pendiente.
   void apply_reactions();
+  // La reacción pendiente de cada cuerpo, en el orden de bodies(): la que deja el solver en el post-tick (los dos
+  // backends) y recibe el cuerpo en el tick siguiente
+  std::vector<core::Wrench> pending() const;
 
   // Marco O del cuerpo al inicio del tick (snapshot_start) y ahora
   const Eigen::Isometry3d& pose_start(size_t body) const { return pose0_[body]; }

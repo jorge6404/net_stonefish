@@ -164,9 +164,30 @@ std::vector<GripAnchor> Grasp::anchors(const std::vector<Eigen::Isometry3d>& end
     a.node = h.node;
     a.from = (from * h.local).cast<float>();
     a.to = (to * h.local).cast<float>();
-    out.push_back({a, body});
+    out.push_back({a, body, h.gripper});
   }
   return out;
+}
+
+std::vector<GraspEvent> Grasp::slip(const std::vector<double>& pull)
+{
+  std::vector<GraspEvent> events;
+  for (size_t g = 0; g < grippers_.size() && g < pull.size(); ++g) {
+    const double limit = grippers_[g].max_pull;
+    if (!(limit > 0.0) || !(pull[g] > limit)) continue;  // sin límite, por debajo o no finito
+    int released = 0;
+    holds_.erase(std::remove_if(holds_.begin(), holds_.end(),
+                                [&](const Hold& h) {
+                                  if (h.gripper != g) return false;
+                                  owner_[static_cast<size_t>(h.node)] = -1;
+                                  releasing_.emplace_back(h.node, g);
+                                  ++released;
+                                  return true;
+                                }),
+                 holds_.end());
+    if (released > 0) events.push_back({g, 0, released, 0});
+  }
+  return events;
 }
 
 void Grasp::exclude_held(std::vector<ContactBody>& bodies) const

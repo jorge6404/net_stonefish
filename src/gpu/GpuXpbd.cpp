@@ -8,6 +8,8 @@
 
 #include <Eigen/Geometry>
 
+#include "stonefish_net/core/hydro.hpp"
+
 namespace stonefish_net::gpu
 {
 namespace
@@ -24,7 +26,7 @@ enum Binding : GLuint
   kAdjacencyLinks, kAnchors, kAnchorMoved, kBodies, kExcluded, kNodeMemory, kLinkMemory, kReactionLog, kReactionCount,
   kReactions, kNodeMemoryUsed, kLinkMemoryUsed, kAnchorState
 };
-constexpr GLuint kParamsBinding = 0;
+constexpr GLuint kParamsBinding = 0, kJetsBinding = 1;  // bloques uniform (std140)
 
 std::string shader_defines()
 {
@@ -33,6 +35,8 @@ std::string shader_defines()
     {"MAX_BODIES", core::kMaxContactBodies},
     {"MAX_EXCLUDING_BODIES", core::kMaxExcludingBodies},
     {"B_PARAMS", kParamsBinding},
+    {"B_JETS", kJetsBinding},
+    {"MAX_JETS", core::kMaxJets},
     {"B_POSITIONS", kPositions},
     {"B_VELOCITIES", kVelocities},
     {"B_DISPLACEMENTS", kDisplacements},
@@ -57,6 +61,10 @@ std::string shader_defines()
   };
   std::string out;
   for (const auto& [name, value] : defines) out += "#define " + std::string(name) + " " + std::to_string(value) + "\n";
+  // Los float, con su punto ("0.470000")
+  out += "#define KNOT_CD " + std::to_string(core::kKnotCd) + "\n";
+  out += "#define JET_CORE " + std::to_string(core::kJetCore) + "\n";
+  out += "#define JET_LENGTH " + std::to_string(core::kJetLength) + "\n";
   return out;
 }
 
@@ -176,6 +184,8 @@ GpuXpbd::GpuXpbd(gl::GlComputeContext& gl, const core::GpuLayout& L)
   log_ = gl::Buffer(static_cast<GLsizeiptr>(sizeof(GpuMoved)) * kLogCapacity, nullptr);
   log_count_ = buffer_of(std::vector<GLuint>{0});
   params_ = gl::Buffer(sizeof(GpuParams), nullptr);
+  jets_ = gl::Buffer(sizeof(GpuJets), nullptr);
+  set_jets({}, 0.1f);
   set_anchors({});
   set_bodies({}, 1);
   set_current_grid(Eigen::Vector3f::Zero(), 1.f, 1, 1, 1, {Eigen::Vector3f::Zero()});
@@ -205,6 +215,21 @@ void GpuXpbd::set_current_grid(const Eigen::Vector3f& origin, float cell, int nx
   glBindTexture(GL_TEXTURE_3D, 0);
   current_origin_ = origin;
   current_cell_ = cell;
+}
+
+void GpuXpbd::set_jets(const std::vector<core::Jet>& jets, float spread)
+{
+  GpuJets g{};
+  g.count = static_cast<uint32_t>(std::min(jets.size(), core::kMaxJets));
+  g.spread = spread;
+  for (uint32_t k = 0; k < g.count; ++k) {
+    const core::Jet& j = jets[k];
+    std::copy(j.origin.data(), j.origin.data() + 3, g.origin_speed[k]);
+    g.origin_speed[k][3] = j.speed;
+    std::copy(j.dir.data(), j.dir.data() + 3, g.dir_radius[k]);
+    g.dir_radius[k][3] = j.radius;
+  }
+  jets_.write(std::vector<GpuJets>{g});
 }
 
 void GpuXpbd::set_anchors(const std::vector<core::Anchor>& anchors)
@@ -312,8 +337,9 @@ void GpuXpbd::upload_params(const core::XpbdParams& p)
   g.g = p.g;
   g.cn = p.cn;
   g.ct = p.ct;
-  g.compliance = p.compliance;
+  g.nu = p.nu;
   g.damping = p.damping;
+  g.damping_time = p.damping_time;
   g.friction = p.friction;
   g.floor_z = p.floor_z;
   std::copy(current_origin_.data(), current_origin_.data() + 3, g.current_origin);
@@ -337,6 +363,7 @@ void GpuXpbd::bind_for_tick()
   };
   for (const auto& [binding, buf] : buffers) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, buf->id());
   glBindBufferBase(GL_UNIFORM_BUFFER, kParamsBinding, params_.id());
+  glBindBufferBase(GL_UNIFORM_BUFFER, kJetsBinding, jets_.id());
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_3D, current_);
   for (const Program* prog : {&forces_, &predict_, &contact_nodes_, &finish_}) glProgramUniform1ui(prog->id, prog->n, nodes_);

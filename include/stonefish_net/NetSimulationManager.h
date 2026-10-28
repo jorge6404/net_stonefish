@@ -10,6 +10,7 @@
 #include <stonefish_ros2/ROS2SimulationManager.h>
 
 #include "stonefish_net/NetSolver.h"
+#include "stonefish_net/NetWrenches.h"
 #include "stonefish_net/SolidContacts.h"
 #include "stonefish_net/core/buoy_asset.hpp"
 #include "stonefish_net/core/net_config.hpp"
@@ -17,6 +18,11 @@
 #include "stonefish_net/core/realtime.hpp"
 
 class btCollisionObject;
+
+namespace sf
+{
+class Thruster;
+}
 
 namespace stonefish_net
 {
@@ -47,7 +53,10 @@ private:
   std::unique_ptr<NetSolver> make_gpu_solver();
   std::unique_ptr<NetSolver> make_bullet_solver(NetEntity& net);
   std::vector<const btCollisionObject*> concave_statics();
+  std::vector<sf::Thruster*> thrusters();
   SolidContacts make_solid_contacts();
+  // Un topic de fuerza por robot con contacto propio y otro por pinza (NetWrenches)
+  void make_wrenches();
   void spawn_buoys();
   void spawn_anchors();
   void log_summary() const;
@@ -62,6 +71,7 @@ private:
   SolidContacts solids_;
   std::unique_ptr<NetSolver> solver_;
   NetForces* net_forces_ = nullptr;  // del SimulationManager (AddActuator)
+  std::unique_ptr<NetWrenches> wrenches_;
 
   // Del hilo de la física; mutables porque el reloj se lee en un getter const de Stonefish
   mutable core::CatchUpClock clock_;

@@ -34,6 +34,7 @@ public:
   }
 
   Section sub(const std::string& key) const { return Section(node_, key, name_ + "." + key); }
+  bool has(const std::string& key) const { return static_cast<bool>(node_[key]); }
 
   double num(const std::string& key) const { return read<double>(key, "valor no numérico"); }
   int integer(const std::string& key) const { return read<int>(key, "valor no entero"); }
@@ -148,6 +149,8 @@ NetConfig parse_net_config(const std::string& yaml_text)
   c.net.opening_deg = net.open_range("opening_deg", 0.0, 180.0);
   c.net.twine_diameter = net.positive("twine_diameter");
   c.net.twine_density = net.positive("twine_density");
+  c.net.twine_modulus = net.positive("twine_modulus");
+  c.net.knot_diameter = net.non_negative("knot_diameter");
 
   const Section pose = root_section(root, "pose");
   c.pose.x = pose.num("x");
@@ -157,24 +160,46 @@ NetConfig parse_net_config(const std::string& yaml_text)
   const Section frame = root_section(root, "frame_rope");
   c.frame_rope.diameter = frame.positive("diameter");
   c.frame_rope.density = frame.positive("density");
+  c.frame_rope.modulus = frame.positive("modulus");
 
   const Section leads = root_section(root, "leads");
   c.leads.spacing = leads.positive("spacing");
   c.leads.mass = leads.non_negative("mass");
 
   const Section buoys = root_section(root, "buoys");
-  c.buoys.spacing = buoys.positive("spacing");
-  c.buoys.dropper = buoys.positive("dropper");
-  c.buoys.mass = buoys.positive("mass");
+  c.buoys.enabled = buoys.has("enabled") ? buoys.flag("enabled") : true;  // opcional: con boyas
+  if (c.buoys.enabled) {
+    c.buoys.spacing = buoys.positive("spacing");
+    c.buoys.dropper = buoys.positive("dropper");
+    c.buoys.mass = buoys.positive("mass");
+  }
 
   const Section mooring = root_section(root, "mooring");
   c.mooring.floor_z = mooring.num("floor_z");
-  c.mooring.upstream = mooring.non_negative("upstream");
-  c.mooring.block_height = mooring.positive("block_height");
   for (auto [key, line] : {std::pair{"bottom", &c.mooring.bottom}, std::pair{"top", &c.mooring.top}}) {
     const Section s = mooring.sub(key);
-    line->outward = s.non_negative("outward");
+    const std::string to = s.has("to") ? s.text("to") : "floor";  // opcional: floor
+    if (to == "floor") {
+      line->to = NetConfig::LineTo::Floor;
+      line->outward = s.non_negative("outward");
+    } else if (to == "wall") {
+      line->to = NetConfig::LineTo::Wall;
+    } else if (to == "none") {
+      line->to = NetConfig::LineTo::None;
+      continue;
+    } else {
+      error(s.field("to"), "debe ser floor, wall o none");
+    }
     line->slack = s.at_least_one("slack");
+  }
+  const auto uses = [&](NetConfig::LineTo to) { return c.mooring.bottom.to == to || c.mooring.top.to == to; };
+  if (uses(NetConfig::LineTo::Floor)) {
+    c.mooring.upstream = mooring.non_negative("upstream");
+    c.mooring.block_height = mooring.positive("block_height");
+  }
+  if (uses(NetConfig::LineTo::Wall)) {
+    c.mooring.wall_y = mooring.positive("wall_y");
+    c.mooring.wall_z = mooring.num("wall_z");
   }
 
   const Section hydro = root_section(root, "hydro");
@@ -183,6 +208,11 @@ NetConfig parse_net_config(const std::string& yaml_text)
   c.hydro.added_mass = hydro.non_negative("added_mass");
   c.hydro.water_density = hydro.positive("water_density");
   c.hydro.current_grid = hydro.positive("current_grid");
+  c.hydro.viscosity = hydro.non_negative("viscosity");
+
+  const Section jets = root_section(root, "thruster_jets");
+  c.thruster_jets.enabled = jets.flag("enabled");
+  c.thruster_jets.spread = jets.positive("spread");
 
   const Section solver = root_section(root, "solver");
   const std::string backend = solver.text("backend");
@@ -195,9 +225,9 @@ NetConfig parse_net_config(const std::string& yaml_text)
   }
   c.solver.iterations = solver.int_at_least("iterations", 1);
   c.solver.substeps = solver.int_at_least("substeps", 1);
-  c.solver.compliance = solver.non_negative("compliance");
   c.solver.contact_hardness = solver.unit("contact_hardness");
   c.solver.margin = solver.positive("margin");
+  c.solver.damping_time = solver.non_negative("damping_time");
   c.solver.damping = solver.unit("damping");
   c.solver.friction = solver.unit("friction");
 
@@ -272,6 +302,7 @@ NetConfig parse_net_config(const std::string& yaml_text)
       }
       g.grip_margin = s.positive("grip_margin");
       g.release_gap = s.positive("release_gap");
+      g.max_pull = grippers[k]["max_pull"] ? s.non_negative("max_pull") : 0.0;  // opcional: 0 = sin límite
       c.grippers.push_back(g);
     }
   }

@@ -15,10 +15,22 @@ namespace
 {
 constexpr double kLeadDensity = 11340.0;
 
-// Masa y volumen de cada nudo con los tramos que quedan (la mitad de cada tramo a cada extremo),
-// más los plomos y la masa añadida del agua.
+// Masa y volumen de cada nudo con los tramos que quedan (la mitad de cada tramo a cada extremo), la esfera del nudo
+// en los nudos de hilo (del mismo material), los plomos y la masa añadida del agua.
 void assign_masses(const NetConfig& c, NetTopology& t)
 {
+  const double knot_volume = M_PI * std::pow(c.net.knot_diameter, 3) / 6.0;
+  for (const auto& l : t.links) {
+    if (l.kind != LinkKind::Twine) continue;
+    for (int n : {l.a, l.b}) {
+      Node& node = t.nodes[static_cast<size_t>(n)];
+      if (node.kind == NodeKind::Knot && node.knot_diameter == 0.0 && c.net.knot_diameter > 0.0) {
+        node.knot_diameter = c.net.knot_diameter;
+        node.volume += knot_volume;
+        node.mass += knot_volume * c.net.twine_density;
+      }
+    }
+  }
   for (const auto& l : t.links) {
     const double rho = l.kind == LinkKind::Twine ? c.net.twine_density : c.frame_rope.density;
     const double vol = M_PI * l.diameter * l.diameter / 4.0 * l.rest_length;
@@ -33,6 +45,15 @@ void assign_masses(const NetConfig& c, NetTopology& t)
   }
   for (auto& n : t.nodes) {
     n.inertial_mass = n.mass + c.hydro.added_mass * c.hydro.water_density * n.volume;
+  }
+}
+
+// Flexibilidad de cada tramo, L / (E · A), con el módulo del hilo o el del cabo (inf → 0, inextensible)
+void assign_compliance(const NetConfig& c, NetTopology& t)
+{
+  for (auto& l : t.links) {
+    const double modulus = l.kind == LinkKind::Twine ? c.net.twine_modulus : c.frame_rope.modulus;
+    l.compliance = l.rest_length / (modulus * M_PI * l.diameter * l.diameter / 4.0);
   }
 }
 }  // namespace
@@ -51,11 +72,12 @@ NetTopology build_topology(const NetConfig& cfg)
   const Lattice lat = build_lattice(cfg, t);
   add_frame(cfg, lat, t);
   t.marks.leads = along_edge(lat, lat.nJ, cfg.leads.spacing);
-  add_droppers(cfg, lat, t);
+  if (cfg.buoys.enabled) add_droppers(cfg, lat, t);
   add_moorings(cfg, lat, t);
   add_damage(cfg, lat, t);
-  prune_to_component(t, t.marks.moorings.front().corner);  // esquina del marco: siempre en la pieza principal
+  prune_to_component(t, lat.corner(false, false));  // esquina del marco: siempre en la pieza principal
   assign_masses(cfg, t);
+  assign_compliance(cfg, t);
   return t;
 }
 

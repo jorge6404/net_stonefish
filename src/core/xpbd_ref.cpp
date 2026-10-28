@@ -130,8 +130,9 @@ void xpbd_substep(const GpuLayout& L, const XpbdParams& p, const std::function<E
       const auto i = static_cast<size_t>(L.adj_links[static_cast<size_t>(a)]);
       const auto na = static_cast<size_t>(L.links[2 * i]), nb = static_cast<size_t>(L.links[2 * i + 1]);
       drag += 0.5f * morison_force<float>(s.x[na], s.x[nb], s.v[na], s.v[nb], 0.5f * (water(s.x[na]) + water(s.x[nb])),
-                                          L.link_props[4 * i + 1], p.rho, p.cn, p.ct);
+                                          L.link_props[4 * i + 1], p.rho, p.cn, p.ct, p.nu);
     }
+    drag += knot_drag<float>(s.v[k], wk, L.node_props[4 * k + 3], p.rho, p.nu);
     const float mass = L.node_props[4 * k], volume = L.node_props[4 * k + 1], inertial = L.node_props[4 * k + 2];
     const Eigen::Vector3f f = limit_drag<float>(drag, wk - s.v[k], inertial, p.h) +
                               Eigen::Vector3f(0.f, 0.f, (mass - p.rho * volume) * p.g);
@@ -143,19 +144,23 @@ void xpbd_substep(const GpuLayout& L, const XpbdParams& p, const std::function<E
     s.x[k] += s.dx[k];
   }
 
-  // b. Tramos, color a color (dentro de un color ningún nudo se repite: el orden no cambia el resultado)
-  const float alpha = p.compliance / (p.h * p.h);
+  // b. Tramos, color a color (dentro de un color ningún nudo se repite: el orden no cambia el resultado), con su
+  // flexibilidad y el amortiguamiento interno de Macklin (XPBD): γ multiplica lo que el tramo se ha alargado en el
+  // subpaso. Solo a tracción, también con el amortiguamiento: el tramo nunca empuja.
+  const float gamma = p.damping_time / p.h;
   for (size_t i = 0; i < L.link_count(); ++i) {
     const auto a = static_cast<size_t>(L.links[2 * i]), b = static_cast<size_t>(L.links[2 * i + 1]);
     const Eigen::Vector3f d = s.x[b] - s.x[a];
     const float len = d.norm();
     const float c = len - L.link_props[4 * i];
     const float wa = node_w(L, a), wb = node_w(L, b);
+    const float alpha = L.link_props[4 * i + 2] / (p.h * p.h);
     if (len < 1e-9f || c <= 0.f || wa + wb + alpha <= 0.f) {
       continue;  // degenerado, flojo (un hilo no empuja) o con los dos extremos fijos
     }
     const Eigen::Vector3f dir = d / len;
-    const float dl = -c / (wa + wb + alpha);
+    const float stretching = dir.dot(s.dx[b] - s.dx[a]);
+    const float dl = std::min(0.f, (-c - gamma * stretching) / ((1.f + gamma) * (wa + wb) + alpha));
     const Eigen::Vector3f fix_a = -wa * dl * dir, fix_b = wb * dl * dir;
     s.x[a] += fix_a;
     s.dx[a] += fix_a;

@@ -35,8 +35,9 @@ core::XpbdParams params(const core::NetConfig& cfg)
   p.g = 9.81f;
   p.cn = static_cast<float>(cfg.hydro.cn);
   p.ct = static_cast<float>(cfg.hydro.ct);
-  p.compliance = static_cast<float>(cfg.solver.compliance);
+  p.nu = static_cast<float>(cfg.hydro.viscosity);
   p.damping = core::substep_damping(cfg.solver.damping, n);
+  p.damping_time = static_cast<float>(cfg.solver.damping_time);
   p.friction = static_cast<float>(cfg.solver.friction);
   p.floor_z = static_cast<float>(cfg.mooring.floor_z);
   return p;
@@ -179,8 +180,8 @@ NetTick ref_tick(const core::NetConfig& cfg, const core::GpuLayout& L)
   };
 }
 
-GripScene::GripScene(const core::NetTopology& t, NetTick f)
-: topo(t), tick(std::move(f)), grasp(t, {gripper()}, buoy_nodes(t)), buoys(fixed_buoys(t))
+GripScene::GripScene(const core::NetTopology& t, NetTick f, const core::Gripper& g, int n)
+: topo(t), tick(std::move(f)), grasp(t, {g}, buoy_nodes(t)), buoys(fixed_buoys(t)), substeps(n)
 {
 }
 
@@ -250,12 +251,18 @@ void GripScene::step(int t)
   if (phase(t) == Away && away_start.empty()) away_start = x;
   tick(anchors, bodies, x, anchor_dx);
 
+  Eigen::Vector3d pull = Eigen::Vector3d::Zero();
   for (size_t j = 0; j < held.size(); ++j) {
     const core::Anchor& a = held[j].anchor;
     ever_held.insert(a.node);
     grip_dx += anchor_dx[buoys.size() + j].cast<double>();
+    pull += core::reaction_force(anchor_dx[buoys.size() + j].cast<double>(), kTick, substeps);
     if (phase(t) == Pull) attach = std::max(attach, (x[static_cast<size_t>(a.node)] - a.to).norm());
   }
+  // Como GpuSolver: después del tick, la pinza que tira más que su max_pull lo suelta
+  max_pull_seen = std::max(max_pull_seen, pull.norm());
+  for (const auto& e : grasp.slip({pull.norm()})) slipped += e.released;
+  if (phase(t) == Pull) held_pull = grasp.held(0).size();
   if (first_held.empty()) first_held = grasp.held(0);
   if (phase(t) == Close) held_close = grasp.held(0).size();
   stretch = std::max(stretch, max_stretch(topo, x));

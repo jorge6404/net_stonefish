@@ -6,6 +6,7 @@
 // GpuXpbd.cpp y llega a los shaders como #define al compilarlos: no hay números que mantener a mano en los .glsl.
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@
 #include <Eigen/Core>
 
 #include "stonefish_net/core/gpu_layout.hpp"
+#include "stonefish_net/core/jet.hpp"
 #include "stonefish_net/core/xpbd.hpp"
 #include "stonefish_net/gl/GlComputeContext.h"
 
@@ -22,12 +24,23 @@ namespace stonefish_net::gpu
 // El bloque uniform Params de xpbd_common.glsl (std140)
 struct GpuParams
 {
-  float h, rho, g, cn, ct, compliance, damping, friction, floor_z;
-  float pad_[3];
+  float h, rho, g, cn, ct, nu, damping, damping_time, friction, floor_z;
+  float pad_[2];
   float current_origin[3];
   float current_cell;
 };
 static_assert(sizeof(GpuParams) == 64, "Params de xpbd_common.glsl");
+
+// El bloque uniform Jets de xpbd_common.glsl (std140): los chorros de los propulsores (core::Jet)
+struct GpuJets
+{
+  float origin_speed[core::kMaxJets][4];  // centro de la hélice, u₀
+  float dir_radius[core::kMaxJets][4];    // hacia donde va el agua, r₀
+  uint32_t count;
+  float spread;
+  float pad_[2];
+};
+static_assert(sizeof(GpuJets) == 2 * 16 * core::kMaxJets + 16, "Jets de xpbd_common.glsl");
 
 class GpuXpbd
 {
@@ -42,6 +55,8 @@ public:
   void set_current_grid(const Eigen::Vector3f& origin, float cell, int nx, int ny, int nz,
                         const std::vector<Eigen::Vector3f>& v);
   void set_anchors(const std::vector<core::Anchor>& anchors);
+  // Los chorros de los propulsores durante el tick siguiente (los primeros core::kMaxJets): se suman a la corriente
+  void set_jets(const std::vector<core::Jet>& jets, float spread);
 
   // Los cuerpos que tocan la red durante el tick siguiente, de n subpasos: se suben sus poses interpoladas de
   // todos los subpasos de una vez.
@@ -88,7 +103,7 @@ private:
   // Crecen cuando hace falta (anchor_capacity_, body_capacity_)
   gl::Buffer anchors_, anchor_dx_, anchor_dx_read_, anchor_state_;
   gl::Buffer bodies_, reactions_, reactions_read_;
-  gl::Buffer params_;
+  gl::Buffer params_, jets_;
   GLuint current_ = 0;  // textura 3D de la corriente
   Eigen::Vector3f current_origin_ = Eigen::Vector3f::Zero();
   float current_cell_ = 1.f;

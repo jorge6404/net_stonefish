@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <limits>
+#include <tuple>
 
 #include "support/scene.hpp"
 
@@ -178,6 +179,54 @@ TEST(Grasp, PullAndRelease)
   EXPECT_LE(scene.stretch, scene.settled_stretch + 0.01f) << "el tirón estira los tramos";
   EXPECT_TRUE(scene.grasp.held(0).empty()) << "al abrirse la pinza no lo suelta todo";
   EXPECT_LT(scene.followed(), 0.05f) << "lo que se agarró sigue al dedo tras soltarlo";
+}
+
+// slip: solo suelta con un tirón finito por encima de max_pull, y sin nudos agarrados no hace nada
+TEST(Grasp, SlipNeedsHeldNodes)
+{
+  const Rest r = rest(topology());
+  core::Gripper g = gripper();
+  g.max_pull = 1.0;
+  core::Grasp grasp(topology(), {g}, {});
+  EXPECT_TRUE(grasp.slip({1e3}).empty()) << "suelta sin tener nada agarrado";
+  grasp.update(r.x, finger_pair(r.c, 0.006));
+  ASSERT_TRUE(holds(grasp, r.k, 0));
+  EXPECT_TRUE(grasp.slip({0.5}).empty() && holds(grasp, r.k, 0)) << "suelta por debajo de max_pull";
+  EXPECT_TRUE(grasp.slip({std::numeric_limits<double>::quiet_NaN()}).empty() && holds(grasp, r.k, 0))
+      << "suelta con un tirón no finito";
+  const auto events = grasp.slip({2.0});
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_GT(events[0].released, 0);
+  EXPECT_FALSE(holds(grasp, r.k, 0)) << "no suelta por encima de max_pull";
+  grasp.update(r.x, finger_pair(r.c, 0.006));
+  EXPECT_FALSE(holds(grasp, r.k, 0)) << "vuelve a agarrar lo que resbaló sin que la pinza se haya apartado";
+}
+
+// La pinza de GripScene con max_pull a la mitad del tirón que hace sin límite: el hilo resbala mientras tira y acaba
+// la fase de tirar con menos agarrado; sin límite no resbala nunca
+TEST(Grasp, SlipReleasesAboveMaxPull)
+{
+  const core::GpuLayout L = core::make_gpu_layout(topology(), core::color_links(topology()));
+  const auto run = [&](double max_pull) {
+    core::Gripper g = gripper();
+    g.max_pull = max_pull;
+    GripScene scene(topology(), ref_tick(config(), L), g, config().solver.substeps);
+    scene.settle(5.0);
+    scene.pinch = scene.nearest_node(net_middle(config()));
+    for (int t = 0; t < GripScene::ticks(); ++t) scene.step(t);
+    return std::make_tuple(scene.max_pull_seen, scene.slipped, scene.held_pull, scene.ever_held.size());
+  };
+  const auto [pull, free_slipped, free_held, free_ever] = run(0.0);
+  const auto [weak_pull, slipped, held, ever] = run(0.5 * pull);
+  std::printf("SlipReleasesAboveMaxPull: tirón máx sin límite %.3f N (%zu agarrados al acabar de tirar); con max_pull "
+              "%.3f N resbalan %d nudos y quedan %zu (tirón máx %.3f N)\n",
+              pull, free_held, 0.5 * pull, slipped, held, weak_pull);
+  EXPECT_EQ(free_slipped, 0) << "sin max_pull resbala";
+  EXPECT_GT(free_held, 0u);
+  EXPECT_GT(ever, 0u) << "con max_pull no llega a agarrar nada";
+  EXPECT_GT(slipped, 0) << "con max_pull a la mitad del tirón no resbala";
+  EXPECT_LT(held, free_held) << "con max_pull acaba de tirar con lo mismo agarrado";
+  (void)free_ever;
 }
 
 }  // namespace stonefish_net::test

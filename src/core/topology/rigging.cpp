@@ -87,23 +87,36 @@ void add_moorings(const NetConfig& c, const Lattice& lat, NetTopology& t)
 {
   for (bool top : {false, true}) {  // orden de Landmarks::moorings: inferiores y luego superiores, izq. y der.
     const NetConfig::Line& line = top ? c.mooring.top : c.mooring.bottom;
+    if (line.to == NetConfig::LineTo::None) continue;
+    const bool on_floor = line.to == NetConfig::LineTo::Floor;
     for (bool right : {false, true}) {
       const int corner = lat.corner(right, !top);
       const Eigen::Vector3d p0 = t.nodes[corner].position;
-      const Eigen::Vector3d base(p0.x() - c.mooring.upstream, p0.y() + (right ? 1.0 : -1.0) * line.outward,
-                                 c.mooring.floor_z);
-      const Eigen::Vector3d anchor = base - Eigen::Vector3d(0, 0, c.mooring.block_height + kAnchorClearance);
-      // la línea tiene que bajar hasta el ancla: si no, sus últimos nudos arrancan dentro del bloque
-      if (!(anchor.z() > p0.z())) {
-        throw std::invalid_argument("mooring.floor_z: el ancla (z=" + std::to_string(anchor.z()) +
-                                    ") queda por encima de la esquina de la red (z=" + std::to_string(p0.z()) +
-                                    "); baja floor_z o block_height");
+      const double side = right ? 1.0 : -1.0;
+      Eigen::Vector3d base = Eigen::Vector3d::Zero(), anchor;
+      if (on_floor) {
+        base = Eigen::Vector3d(p0.x() - c.mooring.upstream, p0.y() + side * line.outward, c.mooring.floor_z);
+        anchor = base - Eigen::Vector3d(0, 0, c.mooring.block_height + kAnchorClearance);
+        // la línea tiene que bajar hasta el ancla: si no, sus últimos nudos arrancan dentro del bloque
+        if (!(anchor.z() > p0.z())) {
+          throw std::invalid_argument("mooring.floor_z: el ancla (z=" + std::to_string(anchor.z()) +
+                                      ") queda por encima de la esquina de la red (z=" + std::to_string(p0.z()) +
+                                      "); baja floor_z o block_height");
+        }
+      } else {
+        // a kAnchorClearance de la pared, por dentro del tanque
+        anchor = Eigen::Vector3d(p0.x(), side * (c.mooring.wall_y - kAnchorClearance), c.mooring.wall_z);
+        if (!(side * (anchor.y() - p0.y()) > 0)) {
+          throw std::invalid_argument("mooring.wall_y: la pared (y=±" + std::to_string(c.mooring.wall_y) +
+                                      ") no queda por fuera de la esquina de la red (y=" + std::to_string(p0.y()) +
+                                      "); sube wall_y o estrecha la red");
+        }
       }
       const double length = (anchor - p0).norm() * line.slack;
       const int end = add_chain(c, t, corner, slack_curve(p0, anchor, length, segments(length, c.net.bar)),
                                 NodeKind::Mooring, LinkKind::Mooring);
       t.nodes[end].fixed = true;
-      t.marks.moorings.push_back(MooringLine{corner, base});
+      t.marks.moorings.push_back(MooringLine{corner, on_floor, base});
     }
   }
 }

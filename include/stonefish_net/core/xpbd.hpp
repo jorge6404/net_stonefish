@@ -35,13 +35,15 @@ struct Anchor
 
 struct XpbdParams
 {
-  float h;           // s, subpaso
-  float rho, g;      // densidad del agua, gravedad
-  float cn, ct;      // arrastre normal y tangencial
-  float compliance;  // m/N
-  float damping;     // por subpaso (substep_damping)
-  float friction;    // μ con el suelo
-  float floor_z;     // m (NED: más hondo = z mayor)
+  float h;             // s, subpaso
+  float rho, g;        // densidad del agua, gravedad
+  float cn, ct;        // arrastre normal (el de nu = 0) y tangencial
+  float nu;            // m²/s, viscosidad del agua para Cn(Re) y Cd(Re) (core/hydro.hpp); 0 = cn constante
+  float damping;       // por subpaso (substep_damping), respecto al suelo
+  float damping_time;  // s, amortiguamiento interno de cada tramo (Kelvin–Voigt): γ = damping_time / h
+  float friction;      // μ con el suelo
+  float floor_z;       // m (NED: más hondo = z mayor)
+  // La flexibilidad de cada tramo va en GpuLayout::link_props (core::Link::compliance)
 };
 
 // Un sólido que toca la red durante un tick. En el subpaso i de n su pose es la interpolación entre pose0 (inicio

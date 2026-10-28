@@ -59,8 +59,8 @@ def generate_launch_description():
                               default_value=PathJoinSubstitution([FindPackageShare('bluerov_stonefish'), 'data'])),
         DeclareLaunchArgument('net_config', default_value=PathJoinSubstitution([share, 'config', 'net.yaml'])),
         DeclareLaunchArgument('simulation_rate', default_value='100.0'),
-        DeclareLaunchArgument('window_width', default_value='640'),
-        DeclareLaunchArgument('window_height', default_value='360'),
+        DeclareLaunchArgument('window_width', default_value='1280'),
+        DeclareLaunchArgument('window_height', default_value='720'),
         DeclareLaunchArgument('damage_seed', default_value='-1'),
         # sin sombras por defecto: los hilos de 2,5 mm parpadean en el mapa de sombras de Stonefish
         DeclareLaunchArgument('rendering_quality', default_value='noshadows'),

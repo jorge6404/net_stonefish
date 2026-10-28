@@ -12,6 +12,7 @@
 #include <Stonefish/core/MaterialManager.h>
 #include <Stonefish/core/SimulationApp.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <Stonefish/actuators/Thruster.h>
 #include <Stonefish/core/Robot.h>
 #include <Stonefish/entities/SolidEntity.h>
 #include <Stonefish/entities/StaticEntity.h>
@@ -45,37 +46,49 @@ sf::SolidEntity* robot_link(sf::SimulationManager& sm, const std::string& robot,
   return r != nullptr ? r->getLink(robot + "/" + link) : nullptr;
 }
 
-// Las pinzas del YAML con sus dedos como cuerpos de contacto (robot_contact o robot_contact_auto por su enlace
-// <robot>/<dedo>); una pinza con algún dedo sin contacto propio se ignora con un aviso
+// Los dedos de una pinza del YAML como cuerpos de contacto (robot_contact o robot_contact_auto por su enlace
+// <robot>/<dedo>), en su orden, hasta el primero que no tiene contacto propio (que queda en `missing`)
+std::vector<size_t> finger_bodies(const core::NetConfig::Gripper& gc, const SolidContacts& solids,
+                                  sf::SimulationManager& sm, std::string& missing)
+{
+  const auto& bodies = solids.bodies();
+  std::vector<size_t> out;
+  for (const auto& finger : gc.fingers) {
+    const sf::SolidEntity* link = robot_link(sm, gc.robot, finger);
+    const auto it = std::find_if(bodies.begin(), bodies.end(), [link](const auto& b) { return b.solid == link; });
+    if (link == nullptr || it == bodies.end()) {
+      missing = finger;
+      break;
+    }
+    out.push_back(static_cast<size_t>(it - bodies.begin()));
+  }
+  return out;
+}
+
+// Las pinzas del YAML con sus dedos como cuerpos de contacto; una pinza con algún dedo sin contacto propio se ignora
+// con un aviso
 std::vector<GpuSolver::Gripper> resolve_grippers(const std::vector<core::NetConfig::Gripper>& config,
                                                  const SolidContacts& solids, sf::SimulationManager& sm,
                                                  const rclcpp::Logger& logger)
 {
-  const auto& bodies = solids.bodies();
-  const auto body_of = [&](const sf::SolidEntity* link) -> std::optional<size_t> {
-    const auto it = std::find_if(bodies.begin(), bodies.end(), [link](const auto& b) { return b.solid == link; });
-    if (link == nullptr || it == bodies.end()) return std::nullopt;
-    return static_cast<size_t>(it - bodies.begin());
-  };
   std::vector<GpuSolver::Gripper> grippers;
   for (const auto& gc : config) {
-    GpuSolver::Gripper g{gc.robot + "/" + gc.fingers[0], {gc.grip_margin, gc.release_gap, {}}};
+    GpuSolver::Gripper g{gc.robot + "/" + gc.fingers[0], {gc.grip_margin, gc.release_gap, {}, gc.max_pull}};
     for (size_t f = 1; f < gc.fingers.size(); ++f) g.name += "+" + gc.fingers[f];
-    for (const auto& finger : gc.fingers) {
-      const std::optional<size_t> body = body_of(robot_link(sm, gc.robot, finger));
-      if (!body) {
-        RCLCPP_WARN(logger, "Red: la pinza %s se ignora: el dedo '%s' no existe o no tiene contacto propio "
-                    "(robot_contact o robot_contact_auto)", g.name.c_str(), finger.c_str());
-        break;
-      }
-      if (*body >= core::kMaxExcludingBodies) {
-        RCLCPP_WARN(logger, "Red: el dedo '%s' de la pinza %s es el cuerpo de contacto %zu (solo los %zu primeros "
-                    "pueden ignorar nudos): chocará con lo que agarre", finger.c_str(), g.name.c_str(), *body,
-                    core::kMaxExcludingBodies);
-      }
-      g.spec.fingers.push_back(*body);
+    std::string missing;
+    g.spec.fingers = finger_bodies(gc, solids, sm, missing);
+    if (g.spec.fingers.size() != gc.fingers.size()) {
+      RCLCPP_WARN(logger, "Red: la pinza %s se ignora: el dedo '%s' no existe o no tiene contacto propio "
+                  "(robot_contact o robot_contact_auto)", g.name.c_str(), missing.c_str());
+      continue;
     }
-    if (g.spec.fingers.size() != gc.fingers.size()) continue;
+    for (size_t f = 0; f < g.spec.fingers.size(); ++f) {
+      if (g.spec.fingers[f] >= core::kMaxExcludingBodies) {
+        RCLCPP_WARN(logger, "Red: el dedo '%s' de la pinza %s es el cuerpo de contacto %zu (solo los %zu primeros "
+                    "pueden ignorar nudos): chocará con lo que agarre", gc.fingers[f].c_str(), g.name.c_str(),
+                    g.spec.fingers[f], core::kMaxExcludingBodies);
+      }
+    }
     RCLCPP_INFO(logger, "Red: pinza %s (grip_margin %.3f m, release_gap %.3f m)", g.name.c_str(), gc.grip_margin,
                 gc.release_gap);
     grippers.push_back(std::move(g));
@@ -153,7 +166,31 @@ void NetSimulationManager::BuildScenario()
   net->set_solver(solver_.get());
   net_forces_ = new NetForces("net_forces", solver_.get(), this, &NetSimulationManager::post_tick, report_);
   AddActuator(net_forces_);
+  make_wrenches();
   log_summary();
+}
+
+void NetSimulationManager::make_wrenches()
+{
+  const std::string prefix = "/stonefish_net/wrench/";
+  std::vector<NetWrenches::Group> groups;
+  for (unsigned int r = 0; sf::Robot* robot = getRobot(r); ++r) {
+    NetWrenches::Group g{prefix + robot->getName(), robot->getName() + "/base_link", robot->getBaseLink(), {}};
+    for (size_t b = 0; b < solids_.bodies().size(); ++b) {
+      if (solids_.bodies()[b].robot == robot) g.bodies.push_back(b);
+    }
+    if (!g.bodies.empty() && g.frame != nullptr) groups.push_back(std::move(g));
+  }
+  // Las pinzas solo agarran con gpu; con bullet no tienen topic propio
+  for (size_t k = 0; k < cfg_.grippers.size() && cfg_.solver.backend == core::NetConfig::Backend::Gpu; ++k) {
+    const auto& gc = cfg_.grippers[k];
+    std::string missing;
+    std::vector<size_t> fingers = finger_bodies(gc, solids_, *this, missing);
+    if (fingers.size() != gc.fingers.size()) continue;
+    sf::SolidEntity* first = solids_.bodies()[fingers.front()].solid;
+    groups.push_back({prefix + gc.robot + "/gripper_" + std::to_string(k), first->getName(), first, std::move(fingers)});
+  }
+  wrenches_ = std::make_unique<NetWrenches>(*nh_, std::move(groups));
 }
 
 // La red en la GPU. Necesita la ventana de SDL de Stonefish: aquí, en el hilo principal, está activo su contexto de
@@ -176,7 +213,7 @@ std::unique_ptr<NetSolver> NetSimulationManager::make_gpu_solver()
   }
   return std::make_unique<GpuSolver>(topo_, cfg_, this, solids_, buoys_, buoy_.eye, window,
                                      ament_index_cpp::get_package_share_directory("stonefish_net") + "/shaders",
-                                     resolve_grippers(cfg_.grippers, solids_, *this, nh_->get_logger()));
+                                     resolve_grippers(cfg_.grippers, solids_, *this, nh_->get_logger()), thrusters());
 }
 
 // La red como cuerpo blando de Bullet, con el contacto propio en la CPU (RobotContact)
@@ -185,13 +222,32 @@ std::unique_ptr<NetSolver> NetSimulationManager::make_bullet_solver(NetEntity& n
   if (!cfg_.grippers.empty()) {
     RCLCPP_WARN(nh_->get_logger(), "Red: grippers se ignora con solver.backend bullet (las pinzas solo agarran con gpu)");
   }
-  return std::make_unique<BulletSolver>(topo_, cfg_, this, &net, solids_, buoys_, concave_statics());
+  return std::make_unique<BulletSolver>(topo_, cfg_, this, &net, solids_, buoys_, concave_statics(), thrusters());
+}
+
+// Los propulsores de todos los robots, cuyo chorro empuja la red; ninguno con thruster_jets.enabled false
+std::vector<sf::Thruster*> NetSimulationManager::thrusters()
+{
+  std::vector<sf::Thruster*> out;
+  if (!cfg_.thruster_jets.enabled) return out;
+  for (unsigned int r = 0; sf::Robot* robot = getRobot(r); ++r) {
+    for (size_t a = 0; sf::Actuator* act = robot->getActuator(a); ++a) {
+      if (act->getType() == sf::ActuatorType::THRUSTER) out.push_back(static_cast<sf::Thruster*>(act));
+    }
+  }
+  RCLCPP_INFO(nh_->get_logger(), "Red: chorro de %zu propulsores sobre la red", out.size());
+  if (out.size() > core::kMaxJets) {
+    RCLCPP_WARN(nh_->get_logger(), "Red: solo los %zu primeros propulsores empujan la red con su chorro", core::kMaxJets);
+  }
+  return out;
 }
 
 void NetSimulationManager::post_tick(btDynamicsWorld* world, btScalar dt)
 {
   sf::SimulationManager::SimulationPostTickCallback(world, dt);
-  static_cast<NetSimulationManager*>(world->getWorldUserInfo())->net_forces_->end_step(dt);
+  auto* self = static_cast<NetSimulationManager*>(world->getWorldUserInfo());
+  self->net_forces_->end_step(dt);
+  self->wrenches_->publish(self->solids_, self->nh_->get_clock()->now());
 }
 
 // BulletSolver aplica el peso con net_weight; si Stonefish activara la gravedad del mundo blando se contaría dos
@@ -333,6 +389,7 @@ void NetSimulationManager::spawn_anchors()
 {
   const double h = cfg_.mooring.block_height;
   for (size_t k = 0; k < topo_.marks.moorings.size(); ++k) {
+    if (!topo_.marks.moorings[k].on_floor) continue;  // atada a la pared del tanque: sin bloque
     const sf::Vector3 base = bt(topo_.marks.moorings[k].block_base);
     auto* block = new sf::Obstacle("net_anchor_" + std::to_string(k), sf::Vector3(kAnchorBlockSide, kAnchorBlockSide, h),
                                    sf::I4(), "Concrete", "net_concrete");

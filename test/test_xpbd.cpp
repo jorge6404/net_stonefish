@@ -201,7 +201,7 @@ TEST(Xpbd, NetSettles)
   std::printf("NetSettles: |v| máx último segundo %.4f m/s, estiramiento máx %.3f %%, z máx %.4f m (suelo %.3f), "
               "centro x %+.3f m\n", vmax_last, 100.f * stretch, deepest, p.floor_z, c1.x() - c0.x());
   EXPECT_LT(vmax_last, 0.05f) << "la red no se asienta en 15 s";
-  if (config().solver.compliance == 0.0) {
+  if (std::isinf(config().net.twine_modulus) && std::isinf(config().frame_rope.modulus)) {
     EXPECT_LT(stretch, 0.02f) << "los tramos se estiran más de un 2 %";
   }
   EXPECT_LE(deepest, p.floor_z + 1e-4f) << "hay nudos por debajo del suelo";
@@ -365,6 +365,124 @@ TEST(Xpbd, RovPushesWithoutTunneling)
               fastest, 1000.0 * worst, c.x() - x_net);
   EXPECT_LE(worst, 0.01) << "el ROV atraviesa la red";
   EXPECT_LE(fastest, 1.0) << "la reacción de la red lanza al ROV";
+}
+
+// Con flexibilidad, el tramo de arriba de una cadena colgada (sin agua) se estira el peso de lo que cuelga de él por su
+// compliance: el equilibrio de XPBD con una iteración por subpaso es el del muelle
+TEST(Xpbd, LinkCompliance)
+{
+  const int count = 5, n = config().solver.substeps;
+  const float alpha = 1e-3f;  // m/N
+  core::GpuLayout L = hanging_chain(count);
+  for (size_t i = 0; i < L.link_count(); ++i) L.link_props[4 * i + 2] = alpha;
+  const core::XpbdParams p = dry(config());
+  const std::vector<core::Anchor> anchors{{0, Eigen::Vector3f::Zero(), Eigen::Vector3f::Zero()}};
+  core::XpbdState s = core::xpbd_init(L);
+  core::ContactMemory mem = core::contact_memory(L);
+  std::vector<core::BodyReaction> reactions;
+  std::vector<Eigen::Vector3f> moved;
+  const auto still = [](const Eigen::Vector3f&) { return Eigen::Vector3f::Zero(); };
+  for (int t = 0; t < ticks_in(3.0); ++t) {
+    for (int i = 0; i < n; ++i) core::xpbd_substep(L, p, still, anchors, {}, i, n, s, mem, moved, reactions);
+  }
+  const float want = (count - 1) * 0.01f * p.g * alpha;  // los 4 nudos de debajo del primero
+  const float got = (s.x[1] - s.x[0]).norm() - 0.1f;
+  std::printf("LinkCompliance: estiramiento del tramo de arriba %.4e m, peso × compliance %.4e m\n", got, want);
+  EXPECT_NEAR(got, want, 0.02f * want) << "el tramo de arriba no se estira tensión × compliance";
+}
+
+namespace
+{
+// Dos nudos de 20 g de masa inercial unidos por un tramo de 0,1 m, a `gap` m, el segundo a `v1` m/s en z; sin agua,
+// sin peso y sin amortiguamiento global
+struct Pair
+{
+  core::GpuLayout L;
+  core::XpbdParams p;
+  core::XpbdState s;
+  core::ContactMemory mem;
+
+  Pair(float gap, float v1, float compliance, float damping_time)
+  : L(hanging_chain(2)), p(dry(config()))
+  {
+    L.x0[4 * 1 + 2] = gap;
+    L.link_props[2] = compliance;
+    p.g = 0.f;
+    p.damping = 0.f;
+    p.damping_time = damping_time;
+    s = core::xpbd_init(L);
+    s.v[1] = Eigen::Vector3f(0.f, 0.f, v1);
+    mem = core::contact_memory(L);
+  }
+  void run(int substeps)
+  {
+    std::vector<Eigen::Vector3f> moved;
+    std::vector<core::BodyReaction> reactions;
+    const auto still = [](const Eigen::Vector3f&) { return Eigen::Vector3f::Zero(); };
+    for (int i = 0; i < substeps; ++i) core::xpbd_substep(L, p, still, {}, {}, 0, 1, s, mem, moved, reactions);
+  }
+  Eigen::Vector3f momentum() const { return 0.02f * (s.v[0] + s.v[1]); }
+  float relative() const { return (s.v[1] - s.v[0]).norm(); }
+};
+}  // namespace
+
+// El amortiguamiento interno (Kelvin–Voigt, damping_time) frena el movimiento relativo de los extremos del tramo sin
+// cambiar la cantidad de movimiento total: no hace fuerza sobre nada de fuera, tampoco sobre el ROV
+TEST(Xpbd, InternalDampingNoNetForce)
+{
+  Pair damped(0.1f, 0.5f, 1e-4f, 1e-3f), elastic(0.1f, 0.5f, 1e-4f, 0.f);
+  const Eigen::Vector3f p0 = damped.momentum();
+  damped.run(200);
+  elastic.run(200);
+  std::printf("InternalDampingNoNetForce: velocidad relativa al final %.4f m/s (sin amortiguar %.4f m/s)\n",
+              damped.relative(), elastic.relative());
+  EXPECT_LE((damped.momentum() - p0).norm(), 1e-6f) << "el amortiguamiento interno cambia la cantidad de movimiento";
+  EXPECT_LT(damped.relative(), 0.5f * elastic.relative()) << "el amortiguamiento interno no frena";
+}
+
+// El amortiguamiento interno no empuja: un tramo flojo, o tenso pero acortándose deprisa, no separa sus extremos
+TEST(Xpbd, DampingOnlyPulls)
+{
+  Pair slack(0.09f, -0.5f, 1e-4f, 1e-3f);
+  slack.run(1);
+  EXPECT_EQ(slack.s.v[0], Eigen::Vector3f::Zero()) << "un tramo flojo empuja";
+  Pair taut(0.1001f, -0.5f, 1e-4f, 1e-3f);
+  taut.run(1);
+  EXPECT_GE(taut.s.v[0].z(), 0.f) << "un tramo que se acorta deprisa empuja su otro extremo hacia fuera";
+}
+
+// La red con la física nueva (hilo y cabo elásticos, nudos, Cn(Re), amortiguamiento interno) se asienta en 15 s con la
+// corriente y las boyas fijas sin el amortiguamiento global
+TEST(Xpbd, SettlesWithoutGlobalDamping)
+{
+  core::NetConfig cfg = config();
+  cfg.net.twine_modulus = 1e9;
+  cfg.frame_rope.modulus = 0.5e9;
+  cfg.net.knot_diameter = 0.006;
+  cfg.hydro.viscosity = 1e-6;
+  cfg.solver.damping = 0.0;
+  cfg.solver.damping_time = 1e-4;
+  const core::NetTopology topo = core::build_topology(cfg);
+  const core::GpuLayout L = core::make_gpu_layout(topo, core::color_links(topo));
+  const core::XpbdParams p = params(cfg);
+  const int n = cfg.solver.substeps;
+  const auto anchors = fixed_buoys(topo);
+  core::XpbdState s = core::xpbd_init(L);
+  core::ContactMemory mem = core::contact_memory(L);
+  std::vector<Eigen::Vector3f> anchor_dx;
+  std::vector<core::BodyReaction> reactions;
+  const int ticks = ticks_in(15.0);
+  float vmax_last = 0.f;
+  for (int t = 0; t < ticks; ++t) {
+    for (int i = 0; i < n; ++i) core::xpbd_substep(L, p, current_at, anchors, {}, i, n, s, mem, anchor_dx, reactions);
+    for (size_t k = 0; k < s.x.size(); ++k) {
+      ASSERT_TRUE(s.x[k].allFinite() && s.v[k].allFinite()) << "nudo " << k << " no finito en el tick " << t;
+      if (t >= ticks - ticks_in(1.0)) vmax_last = std::max(vmax_last, s.v[k].norm());
+    }
+  }
+  std::printf("SettlesWithoutGlobalDamping: |v| máx último segundo %.4f m/s, estiramiento máx %.3f %%\n", vmax_last,
+              100.f * max_stretch(topo, s.x));
+  EXPECT_LT(vmax_last, 0.05f) << "la red no se asienta en 15 s sin el amortiguamiento global";
 }
 
 }  // namespace stonefish_net::test

@@ -1,19 +1,23 @@
 # Red de las pruebas (test/, tools/gpu_check): la de config/net.yaml cuando se escribieron, fija para que los
 # umbrales de las pruebas no dependan de cómo se afine la red del simulador.
 # Metros, kilogramos, NED del mundo de Stonefish (z hacia abajo).
-net:        {width: 6.0, height: 4.0, bar: 0.07, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140}
+net:        {width: 6.0, height: 4.0, bar: 0.07, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140,
+             twine_modulus: .inf, knot_diameter: 0}   # E del hilo (Pa; .inf = inextensible), Ø del nudo (m)
 pose:       {x: 5.0, y_center: 0.0, z_top: 0.35}   # relinga superior; boyas 20 cm por encima, en la superficie
-frame_rope: {diameter: 0.02, density: 950}
+frame_rope: {diameter: 0.02, density: 950, modulus: .inf}   # marco, orinques y fondeo; E (Pa; .inf = inextensible)
 leads:      {spacing: 0.5, mass: 0.5}
 buoys:      {spacing: 2.0, dropper: 0.20, mass: 0.5}   # boya hueca: ~5,8 kg de empuje neto
 # Fondeo: ancla en el suelo, `upstream` aguas arriba (−x) y `outward` hacia fuera en y de su esquina.
 # bottom: esquinas inferiores (con holgura); top: superiores (tensas: mantienen la red abierta a lo ancho)
 mooring:    {floor_z: 4.8, upstream: 1.0, block_height: 0.20,
              bottom: {outward: 0.5, slack: 1.05}, top: {outward: 1.0, slack: 1.0}}
-hydro:      {cn: 1.2, ct: 0.01, added_mass: 1.0, water_density: 1000.0, current_grid: 0.5}
-# backend: gpu (XPBD en compute shaders: substeps, compliance) o bullet (cuerpo blando: iterations,
+hydro:      {cn: 1.2, ct: 0.01, added_mass: 1.0, water_density: 1000.0, current_grid: 0.5, viscosity: 0}
+# viscosity: ν del agua (m²/s) para Cn(Re) del hilo y Cd(Re) de los nudos; 0 = cn constante y Cd 0,47
+# Chorro de cada propulsor de los robots sobre la red (teoría de cantidad de movimiento + chorro turbulento)
+thruster_jets: {enabled: false, spread: 0.1}
+# backend: gpu (XPBD en compute shaders: substeps, damping_time) o bullet (cuerpo blando: iterations,
 # contact_hardness). friction: μ con el suelo; con las boyas el rozamiento es nulo (Stonefish deja a 0 el de sus rígidos)
-solver:     {backend: gpu, substeps: 20, compliance: 0.0, iterations: 10, contact_hardness: 0.3, margin: 0.005, damping: 0.01, friction: 0.5}   # contacto blando: afinar en Stonefish
+solver:     {backend: gpu, substeps: 20, iterations: 10, contact_hardness: 0.3, margin: 0.005, damping: 0.01, damping_time: 0, friction: 0.5}   # contacto blando: afinar en Stonefish
 # Agujeros aleatorios (misma semilla → misma red rota; launch: damage_seed:=N)
 damage:     {seed: 1, tears: 3, tear_min_meshes: 2, tear_max_meshes: 15, stub_fraction: 0.3, loose_fraction: 0.01}
 # Enlaces de robot que tocan la red con contacto propio (caja redondeada en el marco del enlace; Bullet solo

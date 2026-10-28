@@ -11,6 +11,7 @@
 #include <Stonefish/entities/forcefields/Ocean.h>
 
 #include "convert.h"
+#include "thruster_jets.h"
 #include "stonefish_net/core/contact.hpp"
 #include "stonefish_net/core/hydro.hpp"
 
@@ -26,12 +27,13 @@ double seconds_since(std::chrono::steady_clock::time_point start)
 
 BulletSolver::BulletSolver(const core::NetTopology& topo, const core::NetConfig& cfg, sf::SimulationManager* sm,
                            sf::Entity* owner, SolidContacts& solids, const std::vector<sf::SolidEntity*>& buoys,
-                           const std::vector<const btCollisionObject*>& ignored)
+                           const std::vector<const btCollisionObject*>& ignored, std::vector<sf::Thruster*> thrusters)
 : topo_(topo),
   cfg_(cfg),
   sm_(sm),
   solids_(solids),
   buoys_(buoys),
+  thrusters_(std::move(thrusters)),
   robot_contact_(solids, topo),
   sleep_(topo, cfg.sleep),
   diagnostics_(cfg.diagnostics.enabled ? std::make_unique<NetDiagnostics>() : nullptr)
@@ -100,9 +102,14 @@ void BulletSolver::begin_step(double dt)
 
   // Un solo campo de agua por subpaso: el arrastre de cada tramo y su límite por nudo usan el mismo. Un nudo
   // dormido conserva el de su último subpaso despierto (lo usa el tramo frontera que llega a él).
+  // El agua es la corriente del océano más el chorro de los propulsores.
   water_.resize(n, Eigen::Vector3d::Zero());
+  const std::vector<core::Jet> jets = thruster_jets(thrusters_, rho);
+  const auto spread = static_cast<float>(cfg_.thruster_jets.spread);
   for (int k : active) {
-    water_[static_cast<size_t>(k)] = ocean ? eig(ocean->GetFluidVelocity(body_->m_nodes[k].m_x)) : Eigen::Vector3d::Zero();
+    const btVector3& x = body_->m_nodes[k].m_x;
+    water_[static_cast<size_t>(k)] = (ocean ? eig(ocean->GetFluidVelocity(x)) : Eigen::Vector3d::Zero()) +
+                                     core::jet_velocity(jets, eig(x).cast<float>(), spread).cast<double>();
   }
 
   // Morison por tramo activo con el agua media de sus extremos; la mitad a cada nudo (a uno dormido no le hace nada)
@@ -113,12 +120,13 @@ void BulletSolver::begin_step(double dt)
     const auto& n1 = body_->m_nodes[l.b];
     const Eigen::Vector3d f =
       core::morison_force<double>(eig(n0.m_x), eig(n1.m_x), eig(n0.m_v), eig(n1.m_v), 0.5 * (water_[l.a] + water_[l.b]),
-                          l.diameter, rho, cfg_.hydro.cn, cfg_.hydro.ct);
+                          l.diameter, rho, cfg_.hydro.cn, cfg_.hydro.ct, cfg_.hydro.viscosity);
     drag_[l.a] += 0.5 * f;
     drag_[l.b] += 0.5 * f;
   }
 
-  // Por nudo: arrastre limitado, peso menos empuje y contacto con el suelo, en un único addForce.
+  // Por nudo: arrastre (de sus tramos y de su nudo) limitado, peso menos empuje y contacto con el suelo, en un único
+  // addForce.
   // La gravedad la pone net_weight: Stonefish deja a cero la del mundo blando (lo comprueba BuildScenario).
   for (int k : active) {
     const auto& node = topo_.nodes[static_cast<size_t>(k)];
@@ -127,7 +135,8 @@ void BulletSolver::begin_step(double dt)
     }
     const auto& b = body_->m_nodes[k];
     const Eigen::Vector3d pos = eig(b.m_x), vel = eig(b.m_v);
-    const Eigen::Vector3d f = core::limit_drag<double>(drag_[k], water_[k] - vel, node.inertial_mass, dt) +
+    const Eigen::Vector3d knot = core::knot_drag<double>(vel, water_[k], node.knot_diameter, rho, cfg_.hydro.viscosity);
+    const Eigen::Vector3d f = core::limit_drag<double>(drag_[k] + knot, water_[k] - vel, node.inertial_mass, dt) +
                               core::net_weight(node.mass, node.volume, rho, g) +
                               core::floor_force(pos, vel, node.inertial_mass, cfg_.mooring.floor_z, dt,
                                                 cfg_.solver.friction);
