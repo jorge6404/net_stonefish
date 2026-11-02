@@ -33,7 +33,7 @@ def generate_launch_description():
         output='screen',
         arguments=[
             simulation_data, scenario, simulation_rate, window_width, window_height, rendering_quality, net_config,
-            damage_seed,
+            damage_seed, LaunchConfiguration('holes_out'),
         ],
     )
 
@@ -62,6 +62,8 @@ def generate_launch_description():
         DeclareLaunchArgument('window_width', default_value='1280'),
         DeclareLaunchArgument('window_height', default_value='720'),
         DeclareLaunchArgument('damage_seed', default_value='-1'),
+        DeclareLaunchArgument('holes_out', default_value='/tmp/stonefish_net_holes.json',
+                              description='JSON con los agujeros en coordenadas de la red (hole_oracle)'),
         # sin sombras por defecto: los hilos de 2,5 mm parpadean en el mapa de sombras de Stonefish
         DeclareLaunchArgument('rendering_quality', default_value='noshadows'),
         simulator, dvl, battery, leak,

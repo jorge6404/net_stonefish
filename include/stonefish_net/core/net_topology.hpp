@@ -29,8 +29,8 @@ struct Node
 struct Link
 {
   int a, b;
-  // Siempre la distancia inicial entre a y b: Bullet toma de ahí la longitud natural (appendLink y
-  // btSoftBody::updateConstants la recalculan), así que la holgura de un tramo tiene que estar en la forma.
+  // La distancia inicial entre a y b, salvo en las líneas de fondeo pretensadas (slack < 1), más cortas: la holgura de
+  // un tramo tiene que estar en la forma. Bullet la recalcula en appendLink y updateConstants y BulletSolver la repone.
   double rest_length;
   double diameter;
   LinkKind kind;
@@ -67,9 +67,17 @@ struct Landmarks
   void remap(const std::vector<int>& old_to_new);
 };
 
+// Un roto en coordenadas de la red en reposo (m): u desde el borde izquierdo visto desde −x (hacia +y),
+// v desde la relinga superior hacia abajo; centro y caja envolvente de sus rombos.
+struct TearInfo
+{
+  double u, v, w, h;
+};
+
 struct DamageReport
 {
   std::vector<int> tear_sizes;  // rombos de cada roto
+  std::vector<TearInfo> tears;  // los mismos rotos, dónde están
   int loose_cut = 0;            // hilos sueltos cortados
 };
 

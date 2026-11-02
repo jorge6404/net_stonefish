@@ -1,5 +1,6 @@
 #include "rigging.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -112,9 +113,13 @@ void add_moorings(const NetConfig& c, const Lattice& lat, NetTopology& t)
                                       "); sube wall_y o estrecha la red");
         }
       }
-      const double length = (anchor - p0).norm() * line.slack;
+      // slack ≥ 1: holgura en la forma (la longitud natural es la inicial). slack < 1: recta y pretensada, con su
+      // longitud natural slack × la inicial, así que tira de la esquina hacia el ancla desde el primer tick
+      const double distance = (anchor - p0).norm(), length = distance * std::max(line.slack, 1.0);
+      const size_t first_link = t.links.size();
       const int end = add_chain(c, t, corner, slack_curve(p0, anchor, length, segments(length, c.net.bar)),
                                 NodeKind::Mooring, LinkKind::Mooring);
+      for (size_t k = first_link; line.slack < 1.0 && k < t.links.size(); ++k) t.links[k].rest_length *= line.slack;
       t.nodes[end].fixed = true;
       t.marks.moorings.push_back(MooringLine{corner, on_floor, base});
     }

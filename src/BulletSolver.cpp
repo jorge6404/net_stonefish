@@ -51,9 +51,13 @@ BulletSolver::BulletSolver(const core::NetTopology& topo, const core::NetConfig&
   mat->m_kAST = 1;
   mat->m_kVST = 1;
   for (const auto& l : topo_.links) {
-    body_->appendLink(l.a, l.b, mat);  // longitud natural: la distancia inicial (= l.rest_length)
+    body_->appendLink(l.a, l.b, mat);
   }
-  body_->updateConstants();
+  body_->updateConstants();  // pone la longitud natural de cada tramo a su distancia inicial
+  for (size_t k = 0; k < topo_.links.size(); ++k) {
+    body_->m_links[static_cast<int>(k)].m_rl = topo_.links[k].rest_length;  // las líneas pretensadas, más cortas
+  }
+  body_->updateLinkConstants();
 
   body_->m_cfg.piterations = cfg_.solver.iterations;
   body_->m_cfg.kDF = cfg_.solver.friction;  // × rozamiento del rígido, que Stonefish deja a 0: sin efecto con sus sólidos

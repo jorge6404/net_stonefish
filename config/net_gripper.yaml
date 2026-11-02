@@ -1,0 +1,65 @@
+# Red de pesca del tanque CIRTESU (spec: docs/superpowers/specs/2026-10-15-red-blanda-parte1-design.md).
+# Igual que net.yaml con la pinza de scenarios/bluerov_gripper.scn agarrando la red (grippers). Si cambias net.yaml,
+# refleja el cambio aquí.
+# Metros, kilogramos, NED del mundo de Stonefish (z hacia abajo).
+net:        {width: 5.0, height: 3.0, bar: 0.015, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140,
+             twine_modulus: 1.0e9, knot_diameter: 0.006}   # E del hilo (Pa; .inf = inextensible), Ø del nudo (m)
+pose:       {x: 3.0, y_center: 0.0, z_top: 0.0}   # relinga superior en la superficie del agua (z = 0)
+# x: 3 m de la pared de aguas abajo (x = 6): sin fondeo al suelo, la corriente de 0,2 m/s lleva abajo la red ~1,5 m
+frame_rope: {diameter: 0.02, density: 950, modulus: 0.5e9}   # marco, orinques y fondeo; E (Pa; .inf = inextensible)
+leads:      {spacing: 0.5, mass: 0.5}
+# enabled: false = sin boyas ni orinques (la red solo flota por su marco y lo que la sujeta el fondeo)
+buoys:      {enabled: false, spacing: 1.0, dropper: 0.20, mass: 0.5}   # boya hueca: ~5,8 kg de empuje neto
+# Fondeo de cada par de esquinas (bottom: inferiores; top: superiores, tensas: mantienen la red abierta a lo ancho).
+# to: floor (por defecto) = ancla en el suelo, `upstream` aguas arriba (−x) y `outward` hacia fuera en y de su
+# esquina (pide upstream y block_height); wall = atada a la pared lateral del tanque (y = ±wall_y) a la altura
+# wall_z, frente a su esquina; none = sin línea. Antes: bottom: {outward: 0.5, slack: 1.05}, top: {outward: 1.0,
+# slack: 1.0} con upstream: 1.0, block_height: 0.20.
+mooring:    {floor_z: 4.8, wall_y: 4.0, wall_z: -0.7,   # paredes del tanque CIRTESU en y = ±4; atadas 0,7 m sobre el agua
+             bottom: {to: none}, top: {to: wall, slack: 0.9}}   # pretensadas: la relinga queda en la superficie (gpu_check hang)
+hydro:      {cn: 1.2, ct: 0.01, added_mass: 1.0, water_density: 1000.0, current_grid: 0.5, viscosity: 1.0e-6}
+# viscosity: ν del agua (m²/s) para Cn(Re) del hilo y Cd(Re) de los nudos; 0 = cn constante y Cd 0,47
+# Chorro de cada propulsor de los robots sobre la red (teoría de cantidad de movimiento + chorro turbulento)
+thruster_jets: {enabled: true, spread: 0.1}
+# backend: gpu (XPBD en compute shaders: substeps, damping_time) o bullet (cuerpo blando: iterations,
+# contact_hardness). friction: μ con el suelo; con las boyas el rozamiento es nulo (Stonefish deja a 0 el de sus rígidos)
+solver:     {backend: gpu, substeps: 30, iterations: 10, contact_hardness: 0.3, margin: 0.005, damping: 0.0, damping_time: 1.0e-4, friction: 0.5}   # contacto blando: afinar en Stonefish
+# Agujeros aleatorios (misma semilla → misma red rota; launch: damage_seed:=N)
+damage:     {seed: 1, tears: 0, tear_min_meshes: 2, tear_max_meshes: 15, stub_fraction: 0.3, loose_fraction: 0.01}
+# Enlaces de robot que tocan la red con contacto propio (caja redondeada en el marco del enlace; Bullet solo
+# mira los nudos y el robot pasaría entre ellos). friction: μ entre la red y ese enlace. Uno que no exista
+# en el escenario se ignora con un aviso.
+robot_contact:
+  - {robot: bluerov2, link: Vehicle, half_extents: [0.29, 0.24, 0.14], rounding: 0.04,
+     center_offset: [0.0, 0.0, 0.015], friction: 0.5}   # BlueROV2 Heavy
+  # Dedos de la pinza (scenarios/bluerov_gripper.scn): dos cajas por dedo medidas de su malla física (pinza*_phy.obj,
+  # marco O del enlace), en vez de la envolvente de robot_contact_auto (24 × 62 × 38 mm), para que la punta entre
+  # en el rombo hasta donde la deje el hilo. Punta = el 20 % final a lo largo de y; va antes que el cuerpo porque
+  # grippers usa la primera caja de cada dedo: solo agarra lo pellizcado entre las puntas.
+  - {robot: bluerov2, link: gripper/finger1, half_extents: [0.0087, 0.0063, 0.0103], rounding: 0.002,
+     center_offset: [0.0274, 0.0591, 0.0169], friction: 0.5}   # punta, 17 × 13 × 21 mm
+  - {robot: bluerov2, link: gripper/finger2, half_extents: [0.0105, 0.0075, 0.0114], rounding: 0.002,
+     center_offset: [-0.2711, 0.0678, -0.0162], friction: 0.5}   # punta, 21 × 15 × 23 mm
+  - {robot: bluerov2, link: gripper/finger1, half_extents: [0.0111, 0.025, 0.0165], rounding: 0.002,
+     center_offset: [0.0311, 0.0278, 0.006], friction: 0.5}   # cuerpo, 22 × 50 × 33 mm
+  - {robot: bluerov2, link: gripper/finger2, half_extents: [0.0122, 0.0299, 0.017], rounding: 0.002,
+     center_offset: [-0.2673, 0.0305, -0.0038], friction: 0.5}   # cuerpo, 24 × 60 × 34 mm
+# Los demás enlaces de robot del escenario: caja envolvente automática de su forma de colisión
+# (redondeo = rounding_fraction × su semieje menor). Los de robot_contact mandan sobre estos.
+robot_contact_auto: {enabled: true, rounding_fraction: 0.15, friction: 0.5}
+# Igual para los sólidos dinámicos que no son robots (boyas y objetos sueltos): sin esto, Bullet solo mira los
+# nudos y sin rozamiento. El orinque de una boya no choca con su propia boya.
+solid_contact_auto: {enabled: true, rounding_fraction: 0.15, friction: 0.5}
+# Pinzas que agarran la red (solo backend gpu). Un nudo, o el punto medio de un tramo, que queda a menos de
+# grip_margin de las cajas de dos dedos a la vez se ata al primero de ellos (en el orden de fingers) hasta que la
+# pinza se abre: la distancia entre los centros de esos dos dedos crece más de release_gap desde que agarró.
+# Los dedos usan su caja de robot_contact o de robot_contact_auto.
+grippers:
+  - {robot: bluerov2, fingers: [gripper/finger1, gripper/finger2], grip_margin: 0.002, release_gap: 0.005}   # ~radio del hilo: con 0.004 agarraba con la pinza abierta (hueco ~1 cm a -0.4)
+# Baldosas dormidas: los cuadrados de tile_size m quietos y lejos de los robots se congelan y no se calculan.
+# Se duerme tras settle_time s con |v| < sleep_speed y a más de sleep_radius m de los robots; despierta a menos de
+# wake_radius m o si el nudo de fuera de un tramo de su borde se mueve más de wake_shift m desde que se durmió.
+sleep:      {enabled: true, tile_size: 0.5, wake_radius: 1.0, sleep_radius: 1.5, sleep_speed: 0.01, settle_time: 2.0,
+             wake_shift: 0.03}
+# Resumen por segundo en stderr (velocidades, inversiones de velocidad, nudos en el suelo, boyas)
+diagnostics: {enabled: true}

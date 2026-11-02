@@ -131,6 +131,10 @@ TEST(Config, Mooring)
   EXPECT_TRUE(rejects(replaced(top, "top: {to: techo, slack: 1.0}"), "mooring.top.to")) << "acepta un destino raro";
   EXPECT_TRUE(rejects(replaced(top, "top: {to: wall, slack: 1.0}"), "mooring.wall_y")) << "wall sin wall_y";
   EXPECT_TRUE(rejects(replaced(top, "top: {to: wall}"), "mooring.top.slack")) << "wall sin slack";
+  std::string tense = text;
+  tense.replace(tense.find("slack: 1.0}}"), 12, "slack: 0.9}}");
+  EXPECT_EQ(core::parse_net_config(tense).mooring.top.slack, 0.9) << "no acepta una línea pretensada";
+  EXPECT_TRUE(rejects(replaced(top, "top: {outward: 1.0, slack: 0.0}"), "mooring.top.slack")) << "acepta slack 0";
   std::string flat = text;
   flat.replace(flat.find("wall_y: 4.0"), 11, "wall_y: 0.0");
   EXPECT_TRUE(rejects(flat, "mooring.wall_y")) << "acepta wall_y = 0";

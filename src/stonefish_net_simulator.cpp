@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <execinfo.h>
 #include <fcntl.h>
+#include <fstream>
 #include <iostream>
 #include <unistd.h>
 
@@ -80,6 +81,25 @@ sf::HelperSettings helper_settings()
   return h;
 }
 
+// Los rotos de la red en coordenadas de la red, para quien los necesite fuera del simulador (el oráculo de
+// agujeros de sura_net_inspection): {"seed", "width_m", "height_m", "holes": [{"u", "v", "w", "h"}]}, en m.
+void write_holes(const std::string& path, const stonefish_net::core::NetConfig& cfg,
+                 const stonefish_net::core::NetTopology& topo)
+{
+  std::ofstream out(path);
+  if (!out) {
+    std::cerr << "stonefish_net_simulator: no se puede escribir " << path << std::endl;
+    return;
+  }
+  out << "{\"seed\": " << cfg.damage.seed << ", \"width_m\": " << cfg.net.width << ", \"height_m\": " << cfg.net.height
+      << ", \"holes\": [";
+  for (size_t k = 0; k < topo.damage.tears.size(); ++k) {
+    const auto& t = topo.damage.tears[k];
+    out << (k ? ", " : "") << "{\"u\": " << t.u << ", \"v\": " << t.v << ", \"w\": " << t.w << ", \"h\": " << t.h << "}";
+  }
+  out << "]}\n";
+}
+
 int g_crash_fd = -1;  // ~/.ros/log/stonefish_net_crash.log, abierto al arrancar (ros2 launch no guarda stderr)
 
 // Si el simulador se cae, deja la pila en stderr y en g_crash_fd (en humble-gpu no hay gdb).
@@ -113,7 +133,7 @@ int main(int argc, char** argv)
   rclcpp::init(argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
   if (argc < 8) {
     std::cerr << "Uso: stonefish_net_simulator <data> <escenario> <rate> <ancho> <alto> <calidad> <net.yaml> "
-                 "[semilla_daño]"
+                 "[semilla_daño] [agujeros.json]"
               << std::endl;
     rclcpp::shutdown();
     return 1;
@@ -123,6 +143,7 @@ int main(int argc, char** argv)
   const sf::Scalar rate = atof(argv[3]);
   const std::string netConfigPath(argv[7]);
   const int damageSeed = argc > 8 ? atoi(argv[8]) : -1;  // < 0: la del YAML
+  const std::string holesPath = argc > 9 ? argv[9] : "";  // vacío: no se escriben
 
   // Un YAML o un asset erróneos salen con 1 y un mensaje, no a mitad de arranque
   NetSetup setup;
@@ -132,6 +153,9 @@ int main(int argc, char** argv)
       setup.cfg.damage.seed = damageSeed;
     }
     setup.topo = stonefish_net::core::build_topology(setup.cfg);
+    if (!holesPath.empty()) {
+      write_holes(holesPath, setup.cfg, setup.topo);
+    }
     setup.buoy = stonefish_net::core::BuoyAsset::load(
       ament_index_cpp::get_package_share_directory("stonefish_net") + "/data/buoy");
   } catch (const std::exception& e) {

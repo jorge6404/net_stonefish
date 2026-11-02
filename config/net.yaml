@@ -5,7 +5,7 @@
 # Metros, kilogramos, NED del mundo de Stonefish (z hacia abajo).
 net:        {width: 5.0, height: 3.0, bar: 0.015, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140,
              twine_modulus: 1.0e9, knot_diameter: 0.006}   # E del hilo (Pa; .inf = inextensible), Ø del nudo (m)
-pose:       {x: 3.0, y_center: 0.0, z_top: 0.35}   # relinga superior; boyas 20 cm por encima, en la superficie
+pose:       {x: 3.0, y_center: 0.0, z_top: 0.0}   # relinga superior en la superficie del agua (z = 0)
 # x: 3 m de la pared de aguas abajo (x = 6): sin fondeo al suelo, la corriente de 0,2 m/s lleva abajo la red ~1,5 m
 frame_rope: {diameter: 0.02, density: 950, modulus: 0.5e9}   # marco, orinques y fondeo; E (Pa; .inf = inextensible)
 leads:      {spacing: 0.5, mass: 0.5}
@@ -16,8 +16,8 @@ buoys:      {enabled: false, spacing: 1.0, dropper: 0.20, mass: 0.5}   # boya hu
 # esquina (pide upstream y block_height); wall = atada a la pared lateral del tanque (y = ±wall_y) a la altura
 # wall_z, frente a su esquina; none = sin línea. Antes: bottom: {outward: 0.5, slack: 1.05}, top: {outward: 1.0,
 # slack: 1.0} con upstream: 1.0, block_height: 0.20.
-mooring:    {floor_z: 4.8, wall_y: 4.0, wall_z: 0.35,   # paredes del tanque CIRTESU en y = ±4; a la altura de la relinga
-             bottom: {to: none}, top: {to: wall, slack: 1.0}}
+mooring:    {floor_z: 4.8, wall_y: 4.0, wall_z: -0.7,   # paredes del tanque CIRTESU en y = ±4; atadas 0,7 m sobre el agua
+             bottom: {to: none}, top: {to: wall, slack: 0.9}}   # pretensadas: la relinga queda en la superficie (gpu_check hang)
 hydro:      {cn: 1.2, ct: 0.01, added_mass: 1.0, water_density: 1000.0, current_grid: 0.5, viscosity: 1.0e-6}
 # viscosity: ν del agua (m²/s) para Cn(Re) del hilo y Cd(Re) de los nudos; 0 = cn constante y Cd 0,47
 # Chorro de cada propulsor de los robots sobre la red (teoría de cantidad de movimiento + chorro turbulento)

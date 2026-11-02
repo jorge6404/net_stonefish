@@ -194,4 +194,54 @@ TEST(Topology, WallMooring)
   EXPECT_THROW(core::build_topology(cfg), std::invalid_argument);
 }
 
+// Una línea pretensada (slack < 1) sale recta de su esquina a su pared, con la longitud natural de sus tramos
+// slack × la distancia
+TEST(Topology, TenseWallMooring)
+{
+  core::NetConfig cfg = config();
+  cfg.mooring.bottom.to = core::NetConfig::LineTo::None;
+  cfg.mooring.top = {core::NetConfig::LineTo::Wall, 0.0, 0.8};
+  cfg.mooring.wall_y = 4.0;
+  cfg.mooring.wall_z = 0.35;
+  const core::NetTopology topo = core::build_topology(cfg);
+  ASSERT_EQ(topo.marks.moorings.size(), 2u);
+  double rest = 0.0, now = 0.0;
+  for (const auto& l : topo.links) {
+    if (l.kind != core::LinkKind::Mooring) continue;
+    rest += l.rest_length;
+    now += (topo.nodes[static_cast<size_t>(l.a)].position - topo.nodes[static_cast<size_t>(l.b)].position).norm();
+  }
+  double straight = 0.0;
+  for (const auto& m : topo.marks.moorings) {
+    const Eigen::Vector3d corner = topo.nodes[static_cast<size_t>(m.corner)].position;
+    straight += std::abs((corner.y() > cfg.pose.y_center ? 3.99 : -3.99) - corner.y());
+  }
+  EXPECT_NEAR(now, straight, 1e-9) << "la línea pretensada no sale recta";
+  EXPECT_NEAR(rest, 0.8 * straight, 1e-9);
+}
+
+}  // namespace stonefish_net::test
+
+namespace stonefish_net::test
+{
+
+// Cada roto deja su centro y tamaño en coordenadas de la red (u desde el borde izquierdo visto
+// desde −x, v desde la relinga hacia abajo), dentro de la red y de al menos un rombo
+TEST(Topology, TearInfo)
+{
+  const core::NetConfig& cfg = config();
+  const core::NetTopology& topo = topology();
+  ASSERT_FALSE(topo.damage.tear_sizes.empty());
+  ASSERT_EQ(topo.damage.tears.size(), topo.damage.tear_sizes.size());
+  const double half = cfg.net.opening_deg * M_PI / 360.0;
+  for (const auto& t : topo.damage.tears) {
+    EXPECT_GT(t.u, 0.0);
+    EXPECT_LT(t.u, cfg.net.width);
+    EXPECT_GT(t.v, 0.0);
+    EXPECT_LT(t.v, cfg.net.height);
+    EXPECT_GE(t.w, 2.0 * cfg.net.bar * std::sin(half) - 1e-12);
+    EXPECT_GE(t.h, 2.0 * cfg.net.bar * std::cos(half) - 1e-12);
+  }
+}
+
 }  // namespace stonefish_net::test

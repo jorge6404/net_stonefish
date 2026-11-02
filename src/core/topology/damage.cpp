@@ -43,6 +43,19 @@ private:
   int uniform(int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng_); }
   double unit() { return std::uniform_real_distribution<double>(0.0, 1.0)(rng_); }
 
+  // El rombo (ci, cj) va de (ci ± 1)·hy en u y de (cj ± 1)·hz en v
+  TearInfo tear_info(const std::vector<Cell>& region) const
+  {
+    int i0 = region.front().first, i1 = i0, j0 = region.front().second, j1 = j0;
+    for (const auto& [ci, cj] : region) {
+      i0 = std::min(i0, ci);
+      i1 = std::max(i1, ci);
+      j0 = std::min(j0, cj);
+      j1 = std::max(j1, cj);
+    }
+    return {(i0 + i1) / 2.0 * lat_.hy, (j0 + j1) / 2.0 * lat_.hz, (i1 - i0 + 2) * lat_.hy, (j1 - j0 + 2) * lat_.hz};
+  }
+
   // Rombos que no tocan el marco (así el borde queda siempre intacto)
   bool eligible(const Cell& cell) const
   {
@@ -113,6 +126,7 @@ private:
     }
     torn_.insert(region.begin(), region.end());
     report.tear_sizes.push_back(static_cast<int>(region.size()));
+    report.tears.push_back(tear_info(region));
   }
 
   // Fracción de los hilos de la red intacta, elegidos entre los que siguen en pie (Fisher–Yates parcial)

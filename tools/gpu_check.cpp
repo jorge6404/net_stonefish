@@ -7,6 +7,7 @@
 //   gpu_check bench <net.yaml>    ms por tick de la red en la GPU como en el simulador (GPU_CHECK_RATE Hz, 200;
 //                                 GPU_CHECK_JETS chorros de propulsores, 0)
 //   gpu_check shake <net.yaml>    vibración de la red asentada, con boyas fijas y con boyas que giran
+//   gpu_check hang <net.yaml>     a qué profundidad queda colgado el borde superior de la red asentada
 //
 // Sale con 0 si todo está bien y con 1 y el primer fallo si no.
 #include <algorithm>
@@ -614,12 +615,65 @@ int shake(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSession&
   }
   return 0;
 }
+
+// Dónde queda colgado el borde superior de la red asentada en la GPU, con la corriente del tanque y las boyas quietas,
+// a GPU_CHECK_RATE Hz (100 por defecto, el simulation_rate del launch) durante GPU_CHECK_SETTLE s (20): z de las
+// esquinas superiores y la media y lo más hundido de los nudos que empezaron en la relinga (z_top), y lo que más se
+// estira un tramo de fondeo.
+int hang(const core::NetConfig& cfg, const core::NetTopology& topo, GpuSession& gpu)
+{
+  const double rate = std::getenv("GPU_CHECK_RATE") ? std::atof(std::getenv("GPU_CHECK_RATE")) : 100.0;
+  const double settle = std::getenv("GPU_CHECK_SETTLE") ? std::atof(std::getenv("GPU_CHECK_SETTLE")) : 20.0;
+  const double dt = 1.0 / rate;
+  const int n = cfg.solver.substeps;
+  const core::GpuLayout L = core::make_gpu_layout(topo, core::color_links(topo));
+  core::XpbdParams p = params(cfg);
+  p.h = static_cast<float>(dt / n);
+  p.damping = core::substep_damping(cfg.solver.damping, n);
+  stonefish_net::gpu::GpuXpbd solver(*gpu.gl, L);
+  solver.set_current_grid(Eigen::Vector3f(-10.f, -10.f, -1.f), 10.f, 3, 3, 2,
+                          std::vector<Eigen::Vector3f>(3 * 3 * 2, kCurrent));
+  solver.set_anchors(fixed_buoys(topo));
+  solver.set_bodies({}, n);
+  std::vector<Eigen::Vector3f> x, dx, offset;
+  std::vector<core::BodyReaction> reactions;
+  for (int t = 0, ticks = static_cast<int>(std::lround(settle * rate)); t < ticks; ++t) {
+    for (int i = 0; i < n; ++i) solver.substep(p, i, n);
+  }
+  solver.read_back(x, dx, offset, reactions);
+  for (const auto& q : x) {
+    if (!q.allFinite()) return fail("hang: la red deja de ser finita");
+  }
+  double sum = 0.0, deepest = -1e9;
+  int count = 0;
+  for (size_t k = 0; k < topo.nodes.size(); ++k) {
+    const auto& node = topo.nodes[k];
+    if (node.kind != core::NodeKind::Knot || std::abs(node.position.z() - cfg.pose.z_top) > 1e-6) continue;
+    sum += x[k].z();
+    deepest = std::max(deepest, static_cast<double>(x[k].z()));
+    ++count;
+  }
+  double mooring_stretch = 0.0;
+  for (const auto& l : topo.links) {
+    if (l.kind != core::LinkKind::Mooring) continue;
+    mooring_stretch = std::max(mooring_stretch, ((x[l.a] - x[l.b]).norm() - l.rest_length) / l.rest_length);
+  }
+  std::printf("hang: %zu nudos, %d subpasos a %.0f Hz, %.0f s; relinga (empezó en z %.2f): media z %.3f m, lo más "
+              "hondo z %.3f m (%d nudos); estiramiento máx del fondeo %.1f %%\n",
+              x.size(), n, rate, settle, cfg.pose.z_top, sum / count, deepest, count, 100.0 * mooring_stretch);
+  for (const auto& m : topo.marks.moorings) {
+    const Eigen::Vector3f c = x[static_cast<size_t>(m.corner)];
+    std::printf("hang: esquina %s de y %.2f: (%.3f, %.3f, %.3f)\n", m.on_floor ? "anclada al suelo" : "atada a la pared",
+                topo.nodes[static_cast<size_t>(m.corner)].position.y(), c.x(), c.y(), c.z());
+  }
+  return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv)
 {
   if (argc < 3) {
-    std::fprintf(stderr, "Uso: gpu_check gpu|bench|shake <net.yaml> [carpeta de shaders]\n");
+    std::fprintf(stderr, "Uso: gpu_check gpu|bench|shake|hang <net.yaml> [carpeta de shaders]\n");
     return 2;
   }
   const std::string cmd = argv[1];
@@ -651,6 +705,9 @@ int main(int argc, char** argv)
     }
     if (cmd == "bench") {
       return bench(cfg, topo, gpu);
+    }
+    if (cmd == "hang") {
+      return hang(cfg, topo, gpu);
     }
   } catch (const std::exception& e) {
     return fail(e.what());

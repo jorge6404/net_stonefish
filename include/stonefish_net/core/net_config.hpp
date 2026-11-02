@@ -19,7 +19,7 @@ struct NetConfig
   struct Leads { double spacing, mass; } leads;
   // tamaño: el del asset; mass: boya hueca real (kg). Sin enabled, ni boyas ni orinques (y el resto no se lee)
   struct Buoys { bool enabled; double spacing, dropper, mass; } buoys;
-  // Una línea de fondeo por esquina, de longitud = distancia × slack. Floor: ancla en el suelo, `upstream` aguas
+  // Una línea de fondeo por esquina, de longitud = distancia × slack (< 1: recta y pretensada). Floor: ancla en el suelo, `upstream` aguas
   // arriba y `outward` hacia fuera en y de su esquina; Wall: atada a la pared lateral (y = ±wall_y, z = wall_z)
   // frente a su esquina; None: sin línea.
   enum class LineTo { Floor, Wall, None };

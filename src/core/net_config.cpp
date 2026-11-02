@@ -66,10 +66,6 @@ public:
   {
     return check(key, num(key), [](double v) { return v >= 0.0; }, "debe ser >= 0");
   }
-  double at_least_one(const std::string& key) const
-  {
-    return check(key, num(key), [](double v) { return v >= 1.0; }, "debe ser >= 1");
-  }
   double unit(const std::string& key) const
   {
     return check(key, num(key), [](double v) { return v >= 0.0 && v <= 1.0; }, "debe estar en [0, 1]");
@@ -190,7 +186,7 @@ NetConfig parse_net_config(const std::string& yaml_text)
     } else {
       error(s.field("to"), "debe ser floor, wall o none");
     }
-    line->slack = s.at_least_one("slack");
+    line->slack = s.positive("slack");  // < 1: pretensada
   }
   const auto uses = [&](NetConfig::LineTo to) { return c.mooring.bottom.to == to || c.mooring.top.to == to; };
   if (uses(NetConfig::LineTo::Floor)) {
