@@ -1,5 +1,6 @@
 // b. Tramos de un color: restricción de distancia XPBD, una iteración, solo a tracción (un hilo no empuja), con la
-// flexibilidad del tramo (LPROPS.z) y el amortiguamiento interno de Macklin (γ = damping_time / h).
+// flexibilidad del tramo (LPROPS.z) y el amortiguamiento interno de Macklin (γ = damping_time / h). Las diagonales de
+// los rombos (LPROPS.w = 1) también empujan: la rigidez del ángulo del nudo.
 // En un color ningún nudo se repite: cada hilo corrige sus dos nudos sin conflictos.
 #version 430
 #include "xpbd_common.glsl"
@@ -16,13 +17,17 @@ void main()
   const float c = len - LPROPS[i].x;
   const float wa = X[a].w, wb = X[b].w;
   const float alpha = LPROPS[i].z / (h * h);
-  if (len < 1e-9 || c <= 0.0 || wa + wb + alpha <= 0.0) {
+  const bool pushes = LPROPS[i].w > 0.0;
+  if (len < 1e-9 || (c <= 0.0 && !pushes) || wa + wb + alpha <= 0.0) {
     return;
   }
   const vec3 dir = d / len;
   const float gamma = damping_time / h;
   const float stretching = dot(dir, DX[b].xyz - DX[a].xyz);
-  const float dl = min(0.0, (-c - gamma * stretching) / ((1.0 + gamma) * (wa + wb) + alpha));
+  float dl = (-c - gamma * stretching) / ((1.0 + gamma) * (wa + wb) + alpha);
+  if (!pushes) {
+    dl = min(0.0, dl);
+  }
   const vec3 fix_a = -wa * dl * dir, fix_b = wb * dl * dir;
   X[a].xyz += fix_a;
   DX[a].xyz += fix_a;

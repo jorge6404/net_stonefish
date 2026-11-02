@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <SDL2/SDL.h>
+#include <Stonefish/core/GraphicalSimulationApp.h>
 #include <Stonefish/core/MaterialManager.h>
 #include <Stonefish/core/SimulationApp.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -93,7 +94,7 @@ std::vector<GpuSolver::Gripper> resolve_grippers(const std::vector<core::NetConf
                     g.spec.fingers[f], core::kMaxExcludingBodies);
       }
     }
-    RCLCPP_INFO(logger, "Red: pinza %s (grip_margin %.3f m, release_gap %.3f m)", g.name.c_str(), gc.grip_margin,
+    RCLCPP_DEBUG(logger, "Red: pinza %s (grip_margin %.3f m, release_gap %.3f m)", g.name.c_str(), gc.grip_margin,
                 gc.release_gap);
     grippers.push_back(std::move(g));
   }
@@ -102,7 +103,7 @@ std::vector<GpuSolver::Gripper> resolve_grippers(const std::vector<core::NetConf
 
 void log_box(const rclcpp::Logger& logger, const char* what, const std::string& name, const core::RoundedBox& box)
 {
-  RCLCPP_INFO(logger, "Red: %s con '%s': semiejes (%.3f, %.3f, %.3f) m, centro (%.3f, %.3f, %.3f) m, redondeo %.3f m",
+  RCLCPP_DEBUG(logger, "Red: %s con '%s': semiejes (%.3f, %.3f, %.3f) m, centro (%.3f, %.3f, %.3f) m, redondeo %.3f m",
               what, name.c_str(), box.half_extents.x(), box.half_extents.y(), box.half_extents.z(),
               box.center_offset.x(), box.center_offset.y(), box.center_offset.z(), box.rounding);
 }
@@ -141,7 +142,7 @@ uint64_t NetSimulationManager::getSimulationClock() const
   const uint64_t clock = clock_.read(wall);
   const auto window = report_.read(wall, getSimulationTime(), clock_.dropped_us());
   if (window && net_forces_ != nullptr) {
-    print_realtime(*window, wall);
+    print_realtime(*window);
   }
   return clock;
 }
@@ -153,23 +154,14 @@ void NetSimulationManager::SimulationClockSleep(uint64_t us)
   report_.add_sleep(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 }
 
-void NetSimulationManager::print_realtime(const core::RealtimeReport::Window& w, uint64_t wall_us) const
+// Una línea por segundo: factor de tiempo real, física por tick (y lo que es la red) de lo que dura el tick, y
+// dibujo de la escena (media de Stonefish, tiempo de GPU de cada fotograma)
+void NetSimulationManager::print_realtime(const core::RealtimeReport::Window& w) const
 {
-  const double tick_ms = 1e3 / getStepsPerSecond();
-  const double factor = w.sim_s / w.wall_s;
-  if (cfg_.diagnostics.enabled) {
-    std::fprintf(stderr,
-                 "[stonefish_net] tiempo real: factor %.2f (%.2f s simulados en %.2f s de reloj, %ld ticks), tick "
-                 "%.2f ms de %.2f ms: red %.2f ms (máx %.2f), el resto %.2f ms; perdidos %.0f ms por no llegar\n",
-                 factor, w.sim_s, w.wall_s, w.ticks, w.busy_ms, tick_ms, w.net_ms, w.net_max_ms,
-                 std::max(w.busy_ms - w.net_ms, 0.0), w.dropped_ms);
-  } else if (w.dropped_ms > 0.05 * 1e3 * w.wall_s && wall_us >= std::max(last_warning_, w.started_us) + 10'000'000) {
-    std::fprintf(stderr,
-                 "[stonefish_net] AVISO: la física no llega a tiempo real (factor %.2f, tick %.2f ms de %.2f ms, la red "
-                 "%.2f ms): va a cámara lenta; baja solver.substeps o simulation_rate\n",
-                 factor, w.busy_ms, tick_ms, w.net_ms);
-    last_warning_ = wall_us;
-  }
+  auto* app = dynamic_cast<sf::GraphicalSimulationApp*>(sf::SimulationApp::getApp());
+  std::fprintf(stderr, "[red] tiempo real %.2f | física %.1f ms/tick (red %.1f) de %.1f | dibujo %.1f ms\n",
+               w.sim_s / w.wall_s, w.busy_ms, w.net_ms, 1e3 / getStepsPerSecond(),
+               app != nullptr ? app->getDrawingTime() : 0.0);
 }
 
 void NetSimulationManager::BuildScenario()
@@ -191,7 +183,7 @@ void NetSimulationManager::BuildScenario()
       }
     }
     if (!connected) throw std::runtime_error("zip_tie: robot has no ROS servo interface");
-    RCLCPP_INFO(nh_->get_logger(), "Brida: %zu tramos flexibles; agarre inicial en la pinza derecha",
+    RCLCPP_DEBUG(nh_->get_logger(), "Brida: %zu tramos flexibles; agarre inicial en la pinza derecha",
                 zip_tie_->segment_count());
     if (getStepsPerSecond() < 200) {
       RCLCPP_WARN(nh_->get_logger(), "Brida: física a %.1f Hz; usa simulation_rate:=200 para el montaje articulado. "
@@ -289,7 +281,7 @@ std::vector<sf::Thruster*> NetSimulationManager::thrusters()
       if (act->getType() == sf::ActuatorType::THRUSTER) out.push_back(static_cast<sf::Thruster*>(act));
     }
   }
-  RCLCPP_INFO(nh_->get_logger(), "Red: chorro de %zu propulsores sobre la red", out.size());
+  RCLCPP_DEBUG(nh_->get_logger(), "Red: chorro de %zu propulsores sobre la red", out.size());
   if (out.size() > core::kMaxJets) {
     RCLCPP_WARN(nh_->get_logger(), "Red: solo los %zu primeros propulsores empujan la red con su chorro", core::kMaxJets);
   }
@@ -360,7 +352,7 @@ std::vector<const btCollisionObject*> NetSimulationManager::concave_statics()
     btRigidBody* rb = static_cast<sf::StaticEntity*>(ent)->getRigidBody();
     if (rb != nullptr && rb->getCollisionShape()->isConcave()) {
       out.push_back(rb);
-      RCLCPP_INFO(nh_->get_logger(), "Red: sin colisión con la malla cóncava '%s'", ent->getName().c_str());
+      RCLCPP_DEBUG(nh_->get_logger(), "Red: sin colisión con la malla cóncava '%s'", ent->getName().c_str());
     }
   }
   return out;
@@ -387,7 +379,7 @@ SolidContacts NetSimulationManager::make_solid_contacts()
     }
     bodies.push_back({getRobot(rl.robot), link, rl.box, rl.friction, {}});
     taken.insert(link);
-    RCLCPP_INFO(nh_->get_logger(), "Red: contacto propio con '%s'", link->getName().c_str());
+    RCLCPP_DEBUG(nh_->get_logger(), "Red: contacto propio con '%s'", link->getName().c_str());
   }
 
   // Caja envolvente de un sólido; nada (con aviso) si no tiene forma de colisión
@@ -486,11 +478,11 @@ void NetSimulationManager::spawn_anchors()
 
 void NetSimulationManager::log_summary() const
 {
-  RCLCPP_INFO(nh_->get_logger(), "Red: %zu nudos, %zu tramos, %zu boyas, %zu plomos", topo_.nodes.size(),
+  RCLCPP_DEBUG(nh_->get_logger(), "Red: %zu nudos, %zu tramos, %zu boyas, %zu plomos", topo_.nodes.size(),
               topo_.links.size(), topo_.marks.buoys.size(), topo_.marks.leads.size());
   std::string tears;
   for (int s : topo_.damage.tear_sizes) tears += (tears.empty() ? "" : ", ") + std::to_string(s);
-  RCLCPP_INFO(nh_->get_logger(), "Daño (semilla %d): %zu rotos [%s rombos], %d hilos sueltos cortados",
+  RCLCPP_DEBUG(nh_->get_logger(), "Daño (semilla %d): %zu rotos [%s rombos], %d hilos sueltos cortados",
               cfg_.damage.seed, topo_.damage.tear_sizes.size(), tears.c_str(), topo_.damage.loose_cut);
 }
 

@@ -151,6 +151,7 @@ GpuXpbd::GpuXpbd(gl::GlComputeContext& gl, const core::GpuLayout& L)
   nodes_(static_cast<GLuint>(L.node_count())),
   links_(static_cast<GLuint>(L.link_count())),
   color_begin_(L.color_begin),
+  contact_colors_(static_cast<size_t>(L.contact_colors)),
   excluded_now_(L.node_count(), 0u)
 {
   forces_ = load("forces.comp");
@@ -379,10 +380,10 @@ void GpuXpbd::dispatch(const Program& prog, GLuint threads)
   glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }
 
-void GpuXpbd::dispatch_colors(const Program& prog)
+void GpuXpbd::dispatch_colors(const Program& prog, size_t colors)
 {
   glUseProgram(prog.id);
-  for (size_t c = 0; c + 1 < color_begin_.size(); ++c) {
+  for (size_t c = 0; c < colors; ++c) {
     const auto begin = static_cast<GLuint>(color_begin_[c]), size = static_cast<GLuint>(color_begin_[c + 1]) - begin;
     glUniform1ui(prog.first, begin);
     glUniform1ui(prog.count, size);
@@ -405,7 +406,7 @@ void GpuXpbd::substep(const core::XpbdParams& p, int i, int n)
   upload_params(p);
   dispatch(forces_, nodes_);
   dispatch(predict_, nodes_);
-  dispatch_colors(links_prog_);
+  dispatch_colors(links_prog_, color_begin_.size() - 1);
   glProgramUniform1ui(anchors_prog_.id, anchors_prog_.substep, static_cast<GLuint>(i));
   glProgramUniform1ui(anchors_prog_.id, anchors_prog_.substeps, static_cast<GLuint>(n));
   dispatch(anchors_prog_, anchor_count_);
@@ -415,7 +416,7 @@ void GpuXpbd::substep(const core::XpbdParams& p, int i, int n)
       glProgramUniform1ui(prog->id, prog->substep, static_cast<GLuint>(i));
     }
     dispatch(contact_nodes_, nodes_);
-    dispatch_colors(contact_links_);
+    dispatch_colors(contact_links_, contact_colors_);  // las diagonales no tocan los cuerpos
     memory_dirty_ = true;
   }
   dispatch(finish_, nodes_);
