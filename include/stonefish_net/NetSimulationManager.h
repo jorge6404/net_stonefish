@@ -29,14 +29,19 @@ namespace stonefish_net
 
 class NetEntity;
 class NetForces;
+class ZipTie;
+class GripperContact;
 
 class NetSimulationManager : public sf::ROS2SimulationManager
 {
 public:
   NetSimulationManager(sf::Scalar rate, std::string scenarioPath, core::NetConfig cfg, core::NetTopology topo,
                        core::BuoyAsset buoy, const std::shared_ptr<rclcpp::Node>& nh);
+  ~NetSimulationManager() override;
 
   void BuildScenario() override;
+  void DestroyScenario() override;
+  void SimulationStepCompleted(sf::Scalar timeStep) override;
 
   // El reloj de ROS con la recuperación acotada (core::CatchUpClock): si la física no llega a tiempo real va a
   // cámara lenta en vez de a saltos. Solo lo lee AdvanceSimulation, en el hilo de la física, y cada lectura alimenta
@@ -47,6 +52,8 @@ public:
 private:
   // Post-tick de Bullet: el de Stonefish y después el de la red (NetForces::end_step).
   static void post_tick(btDynamicsWorld* world, btScalar dt);
+  static bool contact_added(btManifoldPoint& point, const btCollisionObjectWrapper* a, int part_a, int index_a,
+                             const btCollisionObjectWrapper* b, int part_b, int index_b);
 
   void warn_if_soft_gravity();
   void add_net_materials();
@@ -72,6 +79,8 @@ private:
   std::unique_ptr<NetSolver> solver_;
   NetForces* net_forces_ = nullptr;  // del SimulationManager (AddActuator)
   std::unique_ptr<NetWrenches> wrenches_;
+  std::unique_ptr<ZipTie> zip_tie_;
+  GripperContact* gripper_contact_ = nullptr;  // del SimulationManager (AddActuator)
 
   // Del hilo de la física; mutables porque el reloj se lee en un getter const de Stonefish
   mutable core::CatchUpClock clock_;

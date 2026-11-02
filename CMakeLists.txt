@@ -67,6 +67,10 @@ add_library(stonefish_net_adapter STATIC
   src/NetSleep.cpp
   src/NetSimulationManager.cpp
   src/NetWrenches.cpp
+  src/ZipTie.cpp
+  src/ZipTieGrasp.cpp
+  src/GraspConstraint.cpp
+  src/GripperContact.cpp
   src/diagnostics.cpp
 )
 target_include_directories(stonefish_net_adapter PUBLIC
@@ -101,6 +105,13 @@ if(BUILD_TESTING)
     ament_add_gtest(${name} test/${name}.cpp TIMEOUT 900)
     target_link_libraries(${name} net_test_scene)
   endforeach()
+  foreach(name test_grasp_startup test_grasp_latch)
+    ament_add_gtest(${name} test/${name}.cpp)
+    target_include_directories(${name} PRIVATE include)
+  endforeach()
+  ament_add_gtest(test_grasp_constraint test/test_grasp_constraint.cpp src/GraspConstraint.cpp)
+  target_include_directories(test_grasp_constraint PRIVATE include)
+  target_link_libraries(test_grasp_constraint Stonefish::Stonefish)
 endif()
 
 install(TARGETS stonefish_net_simulator DESTINATION lib/${PROJECT_NAME})

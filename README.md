@@ -72,6 +72,79 @@ Daño (semilla 1): 3 rotos [3, 14, 6 rombos], 47 hilos sueltos cortados
 
 Los números dependen de `net.yaml`. La línea de la GPU sale en el primer tick; si no dice NVIDIA en un portátil con gráfica híbrida, faltan las variables de PRIME del lanzamiento.
 
+## CIRTESUB con brida articulada
+
+Esta versión conserva la red y el solver nuevos, incluidos la elasticidad del
+hilo, los nudos, la hidrodinámica, los chorros de los propulsores, los topics de
+fuerza y el agarre de hilos con `grippers`. Añade la brida articulada y el contacto
+de las pinzas trasladados de la copia anterior. No incorpora el tubo inferior
+ni el modo antiguo de amarres con guías exteriores.
+
+El escenario `cirtesub_stonefish/scenarios/cirtesub_cirtesu_net.scn` conserva
+`<zip_tie>`, `<grasp_assist>` y `<gripper_contact>`, y las mallas de 6 y 24 tramos
+están en `cirtesub_stonefish/data/zip_tie`. El YAML de CIRTESUB usa la misma red
+de `config/net.yaml`: 5 × 3 m, hilo de 2,5 mm, plomos inferiores, sin boyas y
+dos amarres superiores a las paredes. Adapta los contactos y las dos pinzas
+Alpha al robot CIRTESUB, usa 200 Hz con 15 subpasos de red por tick y desactiva
+diagnósticos y `sleep` (ignorado en GPU).
+
+La brida empieza sujeta en la pinza derecha. Abrir la libera; una orden cero
+conserva el agarre. Para recapturarla, cierra cualquiera de las dos pinzas con
+la tira dentro de su región de captura. `segments="24"` selecciona la variante
+más detallada; por defecto se utilizan 6 tramos. El agarre de la brida se
+configura en `<grasp_assist>` del `.scn`; el de los hilos sigue usando `grippers`
+del YAML y conserva `max_pull` opcional.
+
+El atributo opcional `thin_bending_scale` de `<zip_tie>` multiplica únicamente la
+rigidez de flexión a través del espesor de la tira. Su valor por defecto es `1.0`;
+por ejemplo, `thin_bending_scale="10.0"` hace esa flexión diez veces más rígida.
+La rigidez de flexión del otro eje y la torsión conservan sus valores. El factor
+se aplica sobre el material ya ajustado con `young_modulus` y `stiffness_scale`;
+el amortiguamiento de ese eje se recalcula para conservar `damping_ratio`.
+El valor debe ser finito y mayor que cero. El escenario de CIRTESUB lo deja
+explícitamente en `1.0` para que puedas ajustarlo.
+
+Los dedos que sujetan hilos y los sólidos que excluyen nudos se colocan primero
+en la lista de contactos para reservarles las 32 posiciones de la máscara GPU.
+La brida se crea antes de generar los contactos, por lo que sus piezas también
+interactúan con la red mediante `solid_contact_auto`.
+
+En este workspace la versión nueva integrada está en
+`/home/cirtesu/sura_new_ws/src/net_stonefish`, tras trasladarla desde la carpeta
+externa. Su nombre ROS sigue siendo `stonefish_net`. Compila desde la raíz del
+workspace y evita mantener dos paquetes con ese mismo nombre:
+
+```bash
+cd /home/cirtesu/sura_new_ws
+colcon build --packages-select stonefish_net cirtesub_stonefish --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  ros2 launch cirtesub_stonefish cirtesub_cirtesu_net.launch.py
+```
+
+El launch de CIRTESUB usa **200 Hz**: los cuerpos articulados ligeros de la brida
+y sus contactos se integran en Bullet cada 5 ms. `solver.substeps` solo subdivide
+la red GPU, no esos cuerpos. La configuración de CIRTESUB utiliza 15 subpasos
+por tick: conserva el paso XPBD de 1/3000 s y los 3000 subpasos por segundo del
+launch BlueROV a 100 Hz con 30 subpasos, sin duplicar las pasadas de la red.
+El simulador avisa si se carga una brida con menos de 200 Hz y muestra la ruta
+del YAML realmente utilizado. El `config/net.yaml` de este paquete corresponde
+al BlueROV; CIRTESUB carga `cirtesub_stonefish/config/cirtesub_net.yaml`.
+Las escenas sin `<zip_tie>` o `<gripper_contact>` siguen funcionando sin añadir
+esos componentes.
+
+Comprobaciones de assets, geometría inicial y amarres sin compilar:
+
+```bash
+cd /home/cirtesu/sura_new_ws
+env -u PYTHONPATH PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m unittest discover -s src/cirtesub_stonefish/test -p 'test_*.py' -v
+```
+
+También se registran los tests C++ `test_grasp_startup`, `test_grasp_latch` y
+`test_grasp_constraint`; requieren compilar. La dinámica integrada de la brida
+y la red GPU debe verificarse con el simulador después de compilar.
+
 ## Configuración (`config/net.yaml`)
 
 Unidades del SI y ejes NED del mundo de Stonefish (**z hacia abajo**). Todas las secciones son obligatorias. Si falta un campo o un valor está fuera de rango, el simulador no abre la ventana y dice cuál es (por ejemplo, `mooring.floor_z: …`).
@@ -127,7 +200,7 @@ grippers:
 - **Resbala** (opcional, `max_pull` en N): si en un tick lo agarrado tira de los dedos más que eso, el hilo resbala entre ellos y la pinza lo suelta todo, como al abrirse (y no lo vuelve a agarrar mientras siga pellizcado). Así la fuerza que nota el robot se satura como con una pinza real. Sale `… resbala con 12.3 N (max_pull 10.0 N), suelta 3 nudos`. Sin `max_pull` (o con 0), no resbala nunca.
 - Sin `grippers` en el YAML (o con `grippers: []`), todo funciona como antes.
 
-La pinza de `bluerov_stonefish/scenarios/bluerov.scn` sigue comentada y es una sola malla: para usarla hace falta una pinza de dos o más enlaces. Queda para una fase posterior (con las bridas): que una brida cerrada abrace los hilos sin expulsarlos (contacto por pieza de un cuerpo compuesto), que una brida de pocos gramos no oscile con la reacción en el tick siguiente, y el contacto con cables de Stonefish.
+La pinza de `bluerov_stonefish/scenarios/bluerov.scn` sigue comentada y es una sola malla: para usarla hace falta una pinza de dos o más enlaces. El escenario de CIRTESUB ya configura ambos Alpha para agarrar hilos y sujetar la brida articulada.
 
 ### Física del hilo, los nudos y el agua
 

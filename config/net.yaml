@@ -1,4 +1,7 @@
 # Red de pesca del tanque CIRTESU (spec: docs/superpowers/specs/2026-10-15-red-blanda-parte1-design.md).
+# Configuración del launch net_cirtesu.launch.py con BlueROV. El launch
+# cirtesub_stonefish/cirtesub_cirtesu_net.launch.py carga config/cirtesub_net.yaml
+# de cirtesub_stonefish, con los contactos y las pinzas de CIRTESUB.
 # Metros, kilogramos, NED del mundo de Stonefish (z hacia abajo).
 net:        {width: 5.0, height: 3.0, bar: 0.015, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140,
              twine_modulus: 1.0e9, knot_diameter: 0.006}   # E del hilo (Pa; .inf = inextensible), Ø del nudo (m)

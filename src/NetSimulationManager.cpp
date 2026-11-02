@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 #include <SDL2/SDL.h>
@@ -18,12 +19,15 @@
 #include <Stonefish/entities/StaticEntity.h>
 #include <Stonefish/entities/solids/Polyhedron.h>
 #include <Stonefish/entities/statics/Obstacle.h>
+#include <BulletCollision/CollisionDispatch/btManifoldResult.h>
 
 #include "convert.h"
 #include "stonefish_net/BulletSolver.h"
 #include "stonefish_net/NetEntity.h"
 #include "stonefish_net/GpuSolver.h"
 #include "stonefish_net/NetForces.h"
+#include "stonefish_net/ZipTie.h"
+#include "stonefish_net/GripperContact.h"
 
 namespace stonefish_net
 {
@@ -115,6 +119,22 @@ NetSimulationManager::NetSimulationManager(sf::Scalar rate, std::string scenario
 {
 }
 
+NetSimulationManager::~NetSimulationManager() = default;
+
+void NetSimulationManager::DestroyScenario()
+{
+  // Remove the grasp while its Bullet world and robot still exist.
+  zip_tie_.reset();
+  gripper_contact_ = nullptr;
+  net_forces_ = nullptr;
+  wrenches_.reset();
+  solver_.reset();
+  solids_ = SolidContacts();
+  buoys_.clear();
+  gContactAddedCallback = &sf::SimulationManager::CustomMaterialCombinerCallback;
+  sf::ROS2SimulationManager::DestroyScenario();
+}
+
 uint64_t NetSimulationManager::getSimulationClock() const
 {
   const uint64_t wall = sf::ROS2SimulationManager::getSimulationClock();
@@ -155,6 +175,30 @@ void NetSimulationManager::print_realtime(const core::RealtimeReport::Window& w,
 void NetSimulationManager::BuildScenario()
 {
   sf::ROS2SimulationManager::BuildScenario();
+  gripper_contact_ = GripperContact::Create(*this, scenarioPath_);
+  if (gripper_contact_) {
+    AddActuator(gripper_contact_);
+    gContactAddedCallback = &NetSimulationManager::contact_added;
+  }
+  // Create the articulated bodies before fitting their contacts with the net.
+  zip_tie_ = ZipTie::Create(*this, scenarioPath_);
+  if (zip_tie_) {
+    bool connected = false;
+    for (const auto& robot : rosRobots_) {
+      if (robot->robot_->getName() == zip_tie_->robot_name()) {
+        zip_tie_->InitializeCommands(robot->servoSetpoints_);
+        connected = true;
+      }
+    }
+    if (!connected) throw std::runtime_error("zip_tie: robot has no ROS servo interface");
+    RCLCPP_INFO(nh_->get_logger(), "Brida: %zu tramos flexibles; agarre inicial en la pinza derecha",
+                zip_tie_->segment_count());
+    if (getStepsPerSecond() < 200) {
+      RCLCPP_WARN(nh_->get_logger(), "Brida: física a %.1f Hz; usa simulation_rate:=200 para el montaje articulado. "
+                  "solver.substeps solo subdivide la red y no los cuerpos de Bullet.",
+                  static_cast<double>(getStepsPerSecond()));
+    }
+  }
   warn_if_soft_gravity();
   add_net_materials();
   auto* net = new NetEntity("net", topo_, cfg_);
@@ -168,6 +212,16 @@ void NetSimulationManager::BuildScenario()
   AddActuator(net_forces_);
   make_wrenches();
   log_summary();
+}
+
+void NetSimulationManager::SimulationStepCompleted(sf::Scalar timeStep)
+{
+  if (zip_tie_) {
+    for (const auto& robot : rosRobots_) {
+      if (robot->robot_->getName() == zip_tie_->robot_name()) zip_tie_->HandleCommands(robot->servoSetpoints_);
+    }
+  }
+  sf::ROS2SimulationManager::SimulationStepCompleted(timeStep);
 }
 
 void NetSimulationManager::make_wrenches()
@@ -248,6 +302,27 @@ void NetSimulationManager::post_tick(btDynamicsWorld* world, btScalar dt)
   auto* self = static_cast<NetSimulationManager*>(world->getWorldUserInfo());
   self->net_forces_->end_step(dt);
   self->wrenches_->publish(self->solids_, self->nh_->get_clock()->now());
+  // Stonefish has applied ROS commands; keep the net update and its force
+  // publication before updating finger pressure and the zip-tie attachment.
+  if (self->gripper_contact_) {
+    for (const auto& robot : self->rosRobots_) self->gripper_contact_->HandleCommands(robot->servoSetpoints_);
+  }
+  if (self->zip_tie_) {
+    for (const auto& robot : self->rosRobots_) {
+      if (robot->robot_->getName() == self->zip_tie_->robot_name()) self->zip_tie_->UpdateGrasp(robot->servoSetpoints_);
+    }
+  }
+}
+
+bool NetSimulationManager::contact_added(btManifoldPoint& point, const btCollisionObjectWrapper* a,
+  int part_a, int index_a, const btCollisionObjectWrapper* b, int part_b, int index_b)
+{
+  const bool result = sf::SimulationManager::CustomMaterialCombinerCallback(point, a, part_a, index_a, b, part_b, index_b);
+  auto* sm = static_cast<NetSimulationManager*>(sf::SimulationApp::getApp()->getSimulationManager());
+  if (sm->gripper_contact_) {
+    sm->gripper_contact_->ConfigureContact(point, a->getCollisionObject(), b->getCollisionObject());
+  }
+  return result;
 }
 
 // BulletSolver aplica el peso con net_weight; si Stonefish activara la gravedad del mundo blando se contaría dos
@@ -356,6 +431,18 @@ SolidContacts NetSimulationManager::make_solid_contacts()
       }
     }
   }
+  // Both Alpha arms plus a segmented zip tie can exceed the 32 exclusion slots.
+  // Put grasping fingers and bodies with excluded nodes first, before resolving
+  // grippers and wrench groups against the final body order.
+  std::set<const sf::SolidEntity*> grasping_fingers;
+  for (const auto& gripper : cfg_.grippers) {
+    for (const auto& finger : gripper.fingers) {
+      if (auto* link = robot_link(*this, gripper.robot, finger)) grasping_fingers.insert(link);
+    }
+  }
+  std::stable_partition(bodies.begin(), bodies.end(), [&](const auto& body) {
+    return !body.excluded_nodes.empty() || grasping_fingers.count(body.solid) != 0;
+  });
   // Solo los primeros core::kMaxExcludingBodies cuerpos pueden ignorar nudos (el orinque de una boya)
   for (size_t b : core::cannot_exclude(bodies)) {
     RCLCPP_WARN(nh_->get_logger(), "Red: '%s' es el cuerpo de contacto %zu (solo los %zu primeros pueden ignorar nudos): "
