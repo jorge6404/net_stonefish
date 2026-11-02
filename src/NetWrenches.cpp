@@ -14,7 +14,7 @@ NetWrenches::NetWrenches(rclcpp::Node& node, std::vector<Group> groups) : groups
 {
   for (const auto& g : groups_) {
     publishers_.push_back(node.create_publisher<geometry_msgs::msg::WrenchStamped>(g.topic, 10));
-    RCLCPP_INFO(node.get_logger(), "Red: fuerza sobre %zu cuerpos en %s (marco %s)", g.bodies.size(), g.topic.c_str(),
+    RCLCPP_DEBUG(node.get_logger(), "Red: fuerza sobre %zu cuerpos en %s (marco %s)", g.bodies.size(), g.topic.c_str(),
                 g.frame_id.c_str());
   }
 }

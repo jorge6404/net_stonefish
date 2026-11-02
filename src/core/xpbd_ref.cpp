@@ -146,7 +146,8 @@ void xpbd_substep(const GpuLayout& L, const XpbdParams& p, const std::function<E
 
   // b. Tramos, color a color (dentro de un color ningún nudo se repite: el orden no cambia el resultado), con su
   // flexibilidad y el amortiguamiento interno de Macklin (XPBD): γ multiplica lo que el tramo se ha alargado en el
-  // subpaso. Solo a tracción, también con el amortiguamiento: el tramo nunca empuja.
+  // subpaso. Solo a tracción, también con el amortiguamiento: el tramo nunca empuja. Las diagonales de los rombos
+  // (los últimos colores, link_props.w = 1), a tracción y a compresión: la rigidez del ángulo del nudo.
   const float gamma = p.damping_time / p.h;
   for (size_t i = 0; i < L.link_count(); ++i) {
     const auto a = static_cast<size_t>(L.links[2 * i]), b = static_cast<size_t>(L.links[2 * i + 1]);
@@ -155,12 +156,14 @@ void xpbd_substep(const GpuLayout& L, const XpbdParams& p, const std::function<E
     const float c = len - L.link_props[4 * i];
     const float wa = node_w(L, a), wb = node_w(L, b);
     const float alpha = L.link_props[4 * i + 2] / (p.h * p.h);
-    if (len < 1e-9f || c <= 0.f || wa + wb + alpha <= 0.f) {
+    const bool pushes = L.link_props[4 * i + 3] > 0.f;
+    if (len < 1e-9f || (c <= 0.f && !pushes) || wa + wb + alpha <= 0.f) {
       continue;  // degenerado, flojo (un hilo no empuja) o con los dos extremos fijos
     }
     const Eigen::Vector3f dir = d / len;
     const float stretching = dir.dot(s.dx[b] - s.dx[a]);
-    const float dl = std::min(0.f, (-c - gamma * stretching) / ((1.f + gamma) * (wa + wb) + alpha));
+    float dl = (-c - gamma * stretching) / ((1.f + gamma) * (wa + wb) + alpha);
+    if (!pushes) dl = std::min(0.f, dl);
     const Eigen::Vector3f fix_a = -wa * dl * dir, fix_b = wb * dl * dir;
     s.x[a] += fix_a;
     s.dx[a] += fix_a;
@@ -221,7 +224,7 @@ void xpbd_substep(const GpuLayout& L, const XpbdParams& p, const std::function<E
     }
     std::copy(new_slots.begin(), new_slots.end(), slots);
   }
-  for (size_t li = 0; li < L.link_count(); ++li) {
+  for (size_t li = 0; li < L.contact_link_count(); ++li) {
     const auto a = static_cast<size_t>(L.links[2 * li]), c = static_cast<size_t>(L.links[2 * li + 1]);
     Eigen::Vector4f* slots = &memory.link[kMaxContactBodies * li];
     new_slots.fill(free);

@@ -485,4 +485,65 @@ TEST(Xpbd, SettlesWithoutGlobalDamping)
   EXPECT_LT(vmax_last, 0.05f) << "la red no se asienta en 15 s sin el amortiguamiento global";
 }
 
+// Un rombo de hilo inextensible colgado de su esquina de arriba, en el plano y-z, con 10 g en cada una de las otras
+// tres: sin rigidez de ángulo se cierra hasta quedar vertical (el ángulo del nudo no cuesta nada); con ella, sus
+// diagonales (que también empujan) lo mantienen abierto en el mínimo de la energía del peso más la de los dos muelles
+// diagonales.
+TEST(Xpbd, KnotStiffnessKeepsRhombusOpen)
+{
+  const double bar = 0.05, half0 = 60.0 * M_PI / 180.0, mg = 0.01 * 9.81, k = 0.01;  // rombo de 120°: ancho en y
+  const double dy0 = 2.0 * bar * std::sin(half0), dz0 = 2.0 * bar * std::cos(half0);
+  const double ky = 8.0 * k / (dz0 * dz0), kz = 8.0 * k / (dy0 * dy0);  // 1 / flexibilidad de cada diagonal
+  auto rhombus = [&](bool stiff) {
+    core::NetTopology topo;
+    const Eigen::Vector3d corners[] = {{0.0, 0.0, 0.0}, {0.0, -dy0 / 2, dz0 / 2}, {0.0, dy0 / 2, dz0 / 2}, {0.0, 0.0, dz0}};
+    for (int c = 0; c < 4; ++c) {
+      core::Node n;
+      n.position = corners[c];
+      n.kind = core::NodeKind::Knot;
+      n.mass = 0.01;
+      n.inertial_mass = 0.01;
+      n.fixed = c == 0;
+      topo.nodes.push_back(n);
+    }
+    for (auto [a, b] : {std::pair{0, 1}, std::pair{0, 2}, std::pair{1, 3}, std::pair{2, 3}}) {
+      topo.links.push_back({a, b, bar, 0.002, core::LinkKind::Twine});
+    }
+    if (stiff) {
+      topo.shear.push_back({1, 2, dy0, 0.0, core::LinkKind::Shear, 1.0 / ky});
+      topo.shear.push_back({0, 3, dz0, 0.0, core::LinkKind::Shear, 1.0 / kz});
+    }
+    const core::GpuLayout L = core::make_gpu_layout(topo, core::color_links(topo));
+    core::XpbdParams p{};
+    p.h = 1e-4f;
+    p.rho = 0.f;  // sin agua: solo el peso
+    p.g = 9.81f;
+    p.damping = 2e-3f;
+    p.floor_z = 100.f;
+    core::XpbdState s = core::xpbd_init(L);
+    core::ContactMemory mem = core::contact_memory(L);
+    std::vector<Eigen::Vector3f> anchor_dx;
+    std::vector<core::BodyReaction> r;
+    const auto still = [](const Eigen::Vector3f&) { return Eigen::Vector3f::Zero(); };
+    for (int i = 0; i < 30000; ++i) core::xpbd_substep(L, p, still, {}, {}, i % 30, 30, s, mem, anchor_dx, r);
+    for (const auto& x : s.x) EXPECT_TRUE(x.allFinite());
+    const Eigen::Vector3f u = (s.x[1] - s.x[0]).normalized(), v = (s.x[2] - s.x[0]).normalized();
+    return std::acos(std::clamp(static_cast<double>(u.dot(v)), -1.0, 1.0));  // ángulo de la esquina de arriba
+  };
+  // Mínimo de U(θ) = −4 m g bar cos θ + ½ ky (2 bar sin θ − dy0)² + ½ kz (2 bar cos θ − dz0)², θ = medio ángulo de
+  // arriba (z hacia abajo: los nudos de los lados a bar cos θ y el de abajo a 2 bar cos θ)
+  double want = 0.0, best = 1e300;
+  for (double th = 0.0; th < M_PI / 2; th += 1e-5) {
+    const double U = -4.0 * mg * bar * std::cos(th) + 0.5 * ky * std::pow(2.0 * bar * std::sin(th) - dy0, 2) +
+                     0.5 * kz * std::pow(2.0 * bar * std::cos(th) - dz0, 2);
+    if (U < best) best = U, want = 2.0 * th;
+  }
+  const double floppy = rhombus(false), stiff = rhombus(true);
+  std::printf("KnotStiffnessKeepsRhombusOpen: sin rigidez %.1f°, con %.2f N·m/rad %.2f° (energía mínima %.2f°)\n",
+              floppy * 180.0 / M_PI, k, stiff * 180.0 / M_PI, want * 180.0 / M_PI);
+  EXPECT_LT(floppy, 10.0 * M_PI / 180.0) << "sin rigidez el rombo debería cerrarse";
+  EXPECT_LT(want, 2.0 * half0 - 5.0 * M_PI / 180.0) << "el caso no prueba nada: el peso apenas cierra el rombo";
+  EXPECT_NEAR(stiff, want, 0.5 * M_PI / 180.0) << "las diagonales no dan el equilibrio";
+}
+
 }  // namespace stonefish_net::test

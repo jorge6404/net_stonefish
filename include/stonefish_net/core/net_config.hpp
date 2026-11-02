@@ -12,9 +12,17 @@ namespace stonefish_net::core
 struct NetConfig
 {
   // twine_modulus: módulo de Young del hilo (Pa; inf = inextensible); knot_diameter: Ø de la esfera de cada nudo de
-  // hilo (m; 0 = sin nudos), con su masa y su arrastre
-  struct Net { double width, height, bar, opening_deg, twine_diameter, twine_density, twine_modulus, knot_diameter; } net;
+  // hilo (m; 0 = sin nudos), con su masa y su arrastre; knot_stiffness: rigidez del ángulo entre dos hilos en cada
+  // esquina de un rombo (N·m/rad; opcional, 0 = el ángulo no cuesta nada), con dos diagonales elásticas por rombo
+  struct Net
+  {
+    double width, height, bar, opening_deg, twine_diameter, twine_density, twine_modulus, knot_diameter, knot_stiffness;
+  } net;
   struct Pose { double x, y_center, z_top; } pose;
+  // Red irregular (sección opcional; sin ella, todo 0 y la red es regular): desviación del ángulo de reposo de los
+  // rombos (°, necesita knot_stiffness > 0), desviación relativa de la longitud natural de los hilos, escala de
+  // correlación de las dos (m: zonas de ese tamaño se parecen) y semilla
+  struct Irregular { double angle_deg = 0, length = 0, scale = 1; int seed = 0; } irregular;
   struct FrameRope { double diameter, density, modulus; } frame_rope;  // marco, orinques y fondeo; modulus como el hilo
   struct Leads { double spacing, mass; } leads;
   // tamaño: el del asset; mass: boya hueca real (kg). Sin enabled, ni boyas ni orinques (y el resto no se lee)

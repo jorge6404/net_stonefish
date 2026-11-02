@@ -1,6 +1,7 @@
 #include "stonefish_net/BulletSolver.h"
 
 #include <chrono>
+#include <cstdio>
 #include <utility>
 
 #include <BulletDynamics/Featherstone/btMultiBodyLinkCollider.h>
@@ -48,6 +49,9 @@ BulletSolver::BulletSolver(const core::NetTopology& topo, const core::NetConfig&
   body_ = new btSoftBody(&sm->getSoftBodyWorldInfo(), static_cast<int>(x.size()), x.data(), m.data());
   btSoftBody::Material* mat = body_->m_materials[0];
   mat->m_kLST = 1;  // hilos casi inextensibles; sin enlaces de flexión ni cortadura
+  if (!topo_.shear.empty()) {
+    std::fprintf(stderr, "[stonefish_net] bullet: net.knot_stiffness no se aplica (solo con el backend gpu)\n");
+  }
   mat->m_kAST = 1;
   mat->m_kVST = 1;
   for (const auto& l : topo_.links) {

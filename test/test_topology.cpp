@@ -12,28 +12,41 @@
 namespace stonefish_net::test
 {
 
-// Dos tramos del mismo color no comparten nudo y cada tramo tiene un solo color
+// Dos tramos del mismo color no comparten nudo y cada tramo tiene un solo color; las diagonales de los rombos
+// (rigidez de ángulo) van en colores propios detrás de los de los tramos, que son los únicos que tocan los cuerpos
 TEST(Topology, Colors)
 {
-  const core::NetTopology& topo = topology();
+  core::NetConfig cfg = config();
+  cfg.net.knot_stiffness = 0.05;
+  const core::NetTopology topo = core::build_topology(cfg);
   const core::LinkColoring c = core::color_links(topo);
-  const size_t links = topo.links.size();
-  ASSERT_EQ(c.order.size(), links);
+  const size_t links = topo.links.size(), all = links + topo.shear.size();
+  ASSERT_FALSE(topo.shear.empty());
+  ASSERT_EQ(c.order.size(), all);
   ASSERT_FALSE(c.color_begin.empty());
   ASSERT_EQ(c.color_begin.front(), 0);
-  ASSERT_EQ(static_cast<size_t>(c.color_begin.back()), links) << "los colores no cubren todos los tramos";
-  std::vector<int> seen(links, 0);
+  ASSERT_EQ(static_cast<size_t>(c.color_begin.back()), all) << "los colores no cubren todos los tramos";
+  ASSERT_TRUE(c.contact_colors > 0 && c.contact_colors < static_cast<int>(c.color_begin.size()) - 1);
+  ASSERT_EQ(static_cast<size_t>(c.color_begin[static_cast<size_t>(c.contact_colors)]), links)
+      << "los colores de contacto no son exactamente los tramos";
+  const auto link_of = [&](int j) -> const core::Link& {
+    return j < static_cast<int>(links) ? topo.links[static_cast<size_t>(j)] : topo.shear[static_cast<size_t>(j) - links];
+  };
+  std::vector<int> seen(all, 0);
   for (size_t col = 0; col + 1 < c.color_begin.size(); ++col) {
     std::set<int> nodes;
     for (int i = c.color_begin[col]; i < c.color_begin[col + 1]; ++i) {
       const int j = c.order[static_cast<size_t>(i)];
+      ASSERT_EQ(static_cast<int>(col) < c.contact_colors, j < static_cast<int>(links)) << "tramo " << j << " en el color " << col;
       ++seen[static_cast<size_t>(j)];
-      for (int n : {topo.links[static_cast<size_t>(j)].a, topo.links[static_cast<size_t>(j)].b}) {
+      for (int n : {link_of(j).a, link_of(j).b}) {
         ASSERT_TRUE(nodes.insert(n).second) << "el color " << col << " repite el nudo " << n;
       }
     }
   }
-  for (size_t j = 0; j < links; ++j) ASSERT_EQ(seen[j], 1) << "el tramo " << j;
+  for (size_t j = 0; j < all; ++j) ASSERT_EQ(seen[j], 1) << "el tramo " << j;
+  EXPECT_EQ(static_cast<int>(c.color_begin.size()) - 1 - c.contact_colors, 4)
+      << "las diagonales (cadenas horizontales y verticales) caben en 4 colores: cada uno es un lanzamiento por subpaso";
 }
 
 // La adyacencia nudo → tramos tiene exactamente los tramos de cada nudo
@@ -79,6 +92,160 @@ TEST(Topology, GpuLayout)
           << "la adyacencia empaquetada del nudo " << k << " apunta a un tramo ajeno";
     }
   }
+}
+
+// Las diagonales se empaquetan detrás de los tramos con w = 1 (empujan además de tirar) y sin diámetro (ni arrastre
+// ni masa); los tramos, con w = 0. La adyacencia (arrastre) y el contacto solo ven los tramos.
+TEST(Topology, GpuLayoutShear)
+{
+  core::NetConfig cfg = config();
+  cfg.net.knot_stiffness = 0.05;
+  const core::NetTopology topo = core::build_topology(cfg);
+  const core::LinkColoring c = core::color_links(topo);
+  const core::GpuLayout L = core::make_gpu_layout(topo, c);
+  const size_t links = topo.links.size();
+  ASSERT_EQ(L.link_count(), links + topo.shear.size());
+  ASSERT_EQ(L.contact_colors, c.contact_colors);
+  ASSERT_EQ(L.contact_link_count(), links);
+  for (size_t i = 0; i < L.link_count(); ++i) {
+    const int j = c.order[i];
+    const bool shear = j >= static_cast<int>(links);
+    const core::Link& l = shear ? topo.shear[static_cast<size_t>(j) - links] : topo.links[static_cast<size_t>(j)];
+    ASSERT_TRUE(L.links[2 * i] == l.a && L.links[2 * i + 1] == l.b) << "el tramo empaquetado " << i;
+    ASSERT_EQ(L.link_props[4 * i + 2], static_cast<float>(l.compliance));
+    ASSERT_EQ(L.link_props[4 * i + 3], shear ? 1.f : 0.f) << "el tramo empaquetado " << i;
+    if (shear) {
+      ASSERT_EQ(L.link_props[4 * i + 1], 0.f);
+    }
+  }
+  for (int i : L.adj_links) ASSERT_LT(static_cast<size_t>(i), links) << "la adyacencia apunta a una diagonal";
+}
+
+// Rigidez de ángulo en el nudo (net.knot_stiffness, N·m/rad): cada rombo de hilo completo tiene sus dos diagonales,
+// con la longitud de reposo de la red sin deformar y flexibilidad d_otra² / (8 · k), la que da a cada esquina del
+// rombo la rigidez k frente a un cambio de su ángulo. Sin rigidez (0), ninguna; un rombo roto, ninguna.
+TEST(Topology, KnotStiffness)
+{
+  EXPECT_TRUE(topology().shear.empty()) << "sin knot_stiffness no hay diagonales";
+  core::NetConfig cfg = config();
+  cfg.net.knot_stiffness = 0.05;
+  const core::NetTopology topo = core::build_topology(cfg);
+  ASSERT_FALSE(topo.shear.empty());
+  std::set<std::pair<int, int>> twine;
+  for (const auto& l : topo.links) {
+    if (l.kind == core::LinkKind::Twine) twine.insert(std::minmax(l.a, l.b));
+  }
+  const auto linked = [&](int a, int b) { return twine.count(std::minmax(a, b)) > 0; };
+  const core::Adjacency adj = core::node_links(topo);
+  const double diagonal = 2.0 * cfg.net.bar * std::sin(cfg.net.opening_deg * M_PI / 360.0);  // 90°: las dos iguales
+  std::set<std::pair<int, int>> seen;
+  for (const auto& d : topo.shear) {
+    EXPECT_EQ(d.kind, core::LinkKind::Shear);
+    EXPECT_TRUE(seen.insert(std::minmax(d.a, d.b)).second) << "diagonal repetida " << d.a << "-" << d.b;
+    EXPECT_FALSE(linked(d.a, d.b));
+    const double dist = (topo.nodes[static_cast<size_t>(d.a)].position - topo.nodes[static_cast<size_t>(d.b)].position).norm();
+    EXPECT_NEAR(d.rest_length, dist, 1e-12);
+    EXPECT_NEAR(d.rest_length, diagonal, 1e-9);
+    EXPECT_NEAR(d.compliance, diagonal * diagonal / (8.0 * 0.05), 1e-9);
+    // Sus extremos son esquinas opuestas de un rombo: dos nudos unidos por hilo a los dos
+    int corners = 0;
+    for (int a = adj.begin[static_cast<size_t>(d.a)]; a < adj.begin[static_cast<size_t>(d.a) + 1]; ++a) {
+      const core::Link& l = topo.links[static_cast<size_t>(adj.links[static_cast<size_t>(a)])];
+      const int m = l.a == d.a ? l.b : l.a;
+      if (l.kind == core::LinkKind::Twine && linked(m, d.b)) ++corners;
+    }
+    EXPECT_EQ(corners, 2) << "la diagonal " << d.a << "-" << d.b << " no cruza un rombo completo";
+  }
+  // Un nudo del interior de la red está en cuatro rombos: dos diagonales horizontales y dos verticales
+  std::vector<int> degree(topo.nodes.size(), 0);
+  for (const auto& d : topo.shear) ++degree[static_cast<size_t>(d.a)], ++degree[static_cast<size_t>(d.b)];
+  EXPECT_EQ(*std::max_element(degree.begin(), degree.end()), 4);
+}
+
+namespace
+{
+// Ángulo de reposo de cada rombo con diagonales: el de las esquinas de su diagonal más vertical (el opening_deg de
+// la red regular), de las longitudes de reposo de sus dos diagonales; y su centro (y, z)
+struct RhombusRest { double angle_deg, y, z; };
+std::vector<RhombusRest> rhombus_rest(const core::NetTopology& topo)
+{
+  std::vector<RhombusRest> out;
+  for (size_t i = 0; i + 1 < topo.shear.size(); i += 2) {  // add_shear las guarda de dos en dos, rombo a rombo
+    const core::Link& p = topo.shear[i];
+    const core::Link& q = topo.shear[i + 1];
+    const auto dir = [&](const core::Link& l) {
+      return (topo.nodes[static_cast<size_t>(l.b)].position - topo.nodes[static_cast<size_t>(l.a)].position).cwiseAbs();
+    };
+    const bool p_vertical = dir(p).z() > dir(p).y();
+    const double dv = p_vertical ? p.rest_length : q.rest_length, dh = p_vertical ? q.rest_length : p.rest_length;
+    const Eigen::Vector3d c = 0.5 * (topo.nodes[static_cast<size_t>(p.a)].position + topo.nodes[static_cast<size_t>(p.b)].position);
+    out.push_back({2.0 * std::atan2(dh, dv) * 180.0 / M_PI, c.y(), c.z()});
+  }
+  return out;
+}
+}  // namespace
+
+// Red irregular (irregular.angle_deg): el ángulo de reposo de cada rombo sigue un campo aleatorio suave alrededor de
+// opening_deg, con esa desviación y correlación a la escala `scale` (rombos vecinos parecidos, lejanos
+// independientes); la misma semilla da la misma red. Sin la sección, todos a opening_deg.
+TEST(Topology, IrregularAngle)
+{
+  core::NetConfig cfg = config();
+  cfg.net.knot_stiffness = 0.05;
+  for (const auto& r : rhombus_rest(core::build_topology(cfg))) ASSERT_NEAR(r.angle_deg, cfg.net.opening_deg, 1e-6);
+  cfg.irregular = {12.0, 0.0, 0.5, 3};
+  const auto rest = rhombus_rest(core::build_topology(cfg));
+  ASSERT_GT(rest.size(), 1000u);
+  double sum = 0.0, sq = 0.0;
+  for (const auto& r : rest) sum += r.angle_deg, sq += r.angle_deg * r.angle_deg;
+  const double mean = sum / rest.size(), sd = std::sqrt(sq / rest.size() - mean * mean);
+  std::printf("IrregularAngle: %zu rombos, media %.1f°, desviación %.1f°\n", rest.size(), mean, sd);
+  EXPECT_NEAR(mean, cfg.net.opening_deg, 4.0);
+  EXPECT_NEAR(sd, 12.0, 4.0);
+  // Correlación entre pares de rombos cercanos (< scale/5) y lejanos (> 3·scale)
+  double near_xy = 0, near_n = 0, far_xy = 0, far_n = 0;
+  for (size_t i = 0; i < rest.size(); i += 7) {
+    for (size_t j = i + 1; j < rest.size(); j += 13) {
+      const double d = std::hypot(rest[i].y - rest[j].y, rest[i].z - rest[j].z);
+      const double prod = (rest[i].angle_deg - mean) * (rest[j].angle_deg - mean) / (sd * sd);
+      if (d < 0.1) near_xy += prod, ++near_n;
+      if (d > 1.5) far_xy += prod, ++far_n;
+    }
+  }
+  ASSERT_GT(near_n, 20);
+  EXPECT_GT(near_xy / near_n, 0.7) << "rombos vecinos deberían tener ángulos parecidos";
+  EXPECT_LT(std::abs(far_xy / far_n), 0.2) << "rombos lejanos deberían ser independientes";
+  const auto again = rhombus_rest(core::build_topology(cfg));
+  ASSERT_EQ(again.size(), rest.size());
+  for (size_t i = 0; i < rest.size(); ++i) ASSERT_EQ(again[i].angle_deg, rest[i].angle_deg) << "misma semilla, otra red";
+  cfg.irregular.seed = 4;
+  const auto other = rhombus_rest(core::build_topology(cfg));
+  EXPECT_NE(other[rest.size() / 2].angle_deg, rest[rest.size() / 2].angle_deg);
+}
+
+// irregular.length: la longitud natural de cada hilo cambia en (1 + length · campo suave) respecto a la distancia
+// inicial (holguras y tirantes por zonas); los cabos no
+TEST(Topology, IrregularLength)
+{
+  core::NetConfig cfg = config();
+  cfg.irregular = {0.0, 0.03, 0.5, 5};
+  const core::NetTopology plain = core::build_topology(config()), irr = core::build_topology(cfg);
+  ASSERT_EQ(plain.links.size(), irr.links.size());
+  double sum = 0.0, sq = 0.0;
+  int n = 0;
+  for (size_t j = 0; j < irr.links.size(); ++j) {
+    const double ratio = irr.links[j].rest_length / plain.links[j].rest_length;
+    if (irr.links[j].kind != core::LinkKind::Twine) {
+      EXPECT_EQ(ratio, 1.0) << "un cabo cambió de longitud";
+      continue;
+    }
+    EXPECT_GT(ratio, 0.85);
+    sum += ratio, sq += ratio * ratio, ++n;
+  }
+  const double mean = sum / n, sd = std::sqrt(sq / n - mean * mean);
+  std::printf("IrregularLength: %d hilos, media %.4f, desviación %.4f\n", n, mean, sd);
+  EXPECT_NEAR(mean, 1.0, 0.01);
+  EXPECT_NEAR(sd, 0.03, 0.01);
 }
 
 // El orinque de cada boya: su extremo superior y nudos de orinque unidos por tramos de orinque, distintos para cada
