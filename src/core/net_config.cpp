@@ -79,6 +79,11 @@ public:
     return check(key, num(key), [=](double v) { return v > lo && v < hi; },
                  "debe estar en (" + fmt(lo) + ", " + fmt(hi) + ")");
   }
+  double check_range(const std::string& key, double lo, double hi) const
+  {
+    return check(key, num(key), [=](double v) { return v >= lo && v <= hi; },
+                 "debe estar en [" + fmt(lo) + ", " + fmt(hi) + "]");
+  }
   int int_at_least(const std::string& key, int lo) const
   {
     const int v = integer(key);
@@ -147,6 +152,7 @@ NetConfig parse_net_config(const std::string& yaml_text)
   c.net.twine_density = net.positive("twine_density");
   c.net.twine_modulus = net.positive("twine_modulus");
   c.net.knot_diameter = net.non_negative("knot_diameter");
+  c.net.knot_stiffness = net.has("knot_stiffness") ? net.non_negative("knot_stiffness") : 0.0;  // opcional
 
   const Section pose = root_section(root, "pose");
   c.pose.x = pose.num("x");
@@ -196,6 +202,14 @@ NetConfig parse_net_config(const std::string& yaml_text)
   if (uses(NetConfig::LineTo::Wall)) {
     c.mooring.wall_y = mooring.positive("wall_y");
     c.mooring.wall_z = mooring.num("wall_z");
+  }
+
+  if (root["irregular"]) {  // opcional: sin ella, red regular
+    const Section irregular = root_section(root, "irregular");
+    c.irregular.angle_deg = irregular.non_negative("angle_deg");
+    c.irregular.length = irregular.check_range("length", 0.0, 0.3);
+    c.irregular.scale = irregular.positive("scale");
+    c.irregular.seed = irregular.integer("seed");
   }
 
   const Section hydro = root_section(root, "hydro");

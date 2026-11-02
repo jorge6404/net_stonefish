@@ -12,7 +12,7 @@
 namespace stonefish_net::core
 {
 
-enum class LinkKind { Twine, Frame, Dropper, Mooring };
+enum class LinkKind { Twine, Frame, Dropper, Mooring, Shear };  // Shear: diagonal de un rombo (NetTopology::shear)
 enum class NodeKind { Knot, Dropper, Mooring };  // nudo de la red (incluido el marco), orinque o fondeo
 
 struct Node
@@ -85,6 +85,10 @@ struct NetTopology
 {
   std::vector<Node> nodes;
   std::vector<Link> links;
+  // Las dos diagonales de cada rombo de hilo completo con net.knot_stiffness > 0: la rigidez del ángulo del nudo.
+  // Aparte de links porque no son hilo: sin masa, arrastre, contacto ni dibujo, y empujan además de tirar. Solo las
+  // resuelve el solver de GPU.
+  std::vector<Link> shear;
   std::vector<Strand> strands;
   Landmarks marks;
   DamageReport damage;

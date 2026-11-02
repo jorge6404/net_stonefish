@@ -69,7 +69,7 @@ private:
   void log_summary() const;
   // Con diagnostics, cada ventana: factor de tiempo real y coste del tick (la red y el resto); sin él, un aviso cada
   // 10 s si se está perdiendo tiempo
-  void print_realtime(const core::RealtimeReport::Window& w, uint64_t wall_us) const;
+  void print_realtime(const core::RealtimeReport::Window& w) const;
 
   core::NetConfig cfg_;
   core::NetTopology topo_;
@@ -85,7 +85,6 @@ private:
   // Del hilo de la física; mutables porque el reloj se lee en un getter const de Stonefish
   mutable core::CatchUpClock clock_;
   mutable core::RealtimeReport report_;
-  mutable uint64_t last_warning_ = 0;
 };
 
 }  // namespace stonefish_net

@@ -18,6 +18,7 @@ add_library(net_core STATIC
   src/core/topology/lattice.cpp
   src/core/topology/rigging.cpp
   src/core/topology/damage.cpp
+  src/core/topology/irregular.cpp
   src/core/topology/graph.cpp
   src/core/hydro.cpp
   src/core/contact.cpp

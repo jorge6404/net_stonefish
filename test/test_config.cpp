@@ -92,6 +92,24 @@ TEST(Config, Physics)
   EXPECT_EQ(core::parse_net_config(replaced("twine_modulus: .inf", "twine_modulus: 1.0e9")).net.twine_modulus, 1e9);
   EXPECT_TRUE(rejects(replaced("twine_modulus: .inf", "twine_modulus: 0"), "net.twine_modulus"));
   EXPECT_TRUE(rejects(replaced("knot_diameter: 0", "knot_diameter: -0.001"), "net.knot_diameter"));
+  EXPECT_EQ(c.net.knot_stiffness, 0.0) << "knot_stiffness es opcional: sin él, nudos sin rigidez de ángulo";
+  EXPECT_EQ(core::parse_net_config(replaced("knot_diameter: 0", "knot_diameter: 0, knot_stiffness: 0.05"))
+                .net.knot_stiffness,
+            0.05);
+  EXPECT_TRUE(rejects(replaced("knot_diameter: 0", "knot_diameter: 0, knot_stiffness: -1"), "net.knot_stiffness"));
+  // irregular: opcional; sin la sección, red regular
+  EXPECT_EQ(c.irregular.angle_deg, 0.0);
+  EXPECT_EQ(c.irregular.length, 0.0);
+  const core::NetConfig irr =
+      core::parse_net_config(replaced("\nthruster_jets:", "\nirregular: {angle_deg: 12, length: 0.03, scale: 0.4, seed: 7}\nthruster_jets:"));
+  EXPECT_TRUE(irr.irregular.angle_deg == 12.0 && irr.irregular.length == 0.03 && irr.irregular.scale == 0.4 &&
+              irr.irregular.seed == 7);
+  EXPECT_TRUE(rejects(replaced("\nthruster_jets:", "\nirregular: {angle_deg: -1, length: 0, scale: 0.4, seed: 1}\nthruster_jets:"),
+                      "irregular.angle_deg"));
+  EXPECT_TRUE(rejects(replaced("\nthruster_jets:", "\nirregular: {angle_deg: 5, length: 0.5, scale: 0.4, seed: 1}\nthruster_jets:"),
+                      "irregular.length"));
+  EXPECT_TRUE(rejects(replaced("\nthruster_jets:", "\nirregular: {angle_deg: 5, length: 0, scale: 0, seed: 1}\nthruster_jets:"),
+                      "irregular.scale"));
   EXPECT_TRUE(rejects(replaced("modulus: .inf}", "modulus: 0}"), "frame_rope.modulus"));
   EXPECT_TRUE(rejects(replaced("viscosity: 0", "viscosity: -1"), "hydro.viscosity"));
   EXPECT_TRUE(rejects(replaced("damping_time: 0", "damping_time: -1"), "solver.damping_time"));

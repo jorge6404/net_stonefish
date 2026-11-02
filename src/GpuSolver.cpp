@@ -72,8 +72,11 @@ void GpuSolver::start_gpu()
     std::fprintf(stderr, "[stonefish_net] la red no puede calcularse en la GPU: %s; usa solver.backend: bullet\n", e.what());
     std::exit(1);
   }
-  std::fprintf(stderr, "[stonefish_net] red en la GPU: %s, %zu nudos, %zu tramos en %d colores, %d subpasos por tick\n",
-               gl_.vendor().c_str(), layout_.node_count(), layout_.link_count(), layout_.colors(), cfg_.solver.substeps);
+  if (!cfg_.diagnostics.enabled) return;
+  std::fprintf(stderr,
+               "[stonefish_net] red en la GPU: %s, %zu nudos, %zu tramos y %zu diagonales en %d colores, %d subpasos por tick\n",
+               gl_.vendor().c_str(), layout_.node_count(), layout_.contact_link_count(),
+               layout_.link_count() - layout_.contact_link_count(), layout_.colors(), cfg_.solver.substeps);
 }
 
 Eigen::Vector3d GpuSolver::eye_of(size_t buoy) const
@@ -116,6 +119,7 @@ void GpuSolver::update_grasp()
   std::vector<core::Finger> fingers;
   for (size_t b = 0; b < solids_.bodies().size(); ++b) fingers.push_back({solids_.pose_start(b), solids_.bodies()[b].box});
   for (const auto& e : grasp_.update(positions_, fingers)) {
+    if (!cfg_.diagnostics.enabled) continue;
     const char* name = grippers_[e.gripper].name.c_str();
     if (e.released > 0) std::fprintf(stderr, "[stonefish_net] pinza %s: suelta %d nudos (total %d)\n", name, e.released, e.held);
     if (e.grabbed > 0) std::fprintf(stderr, "[stonefish_net] pinza %s: agarra %d nudos (total %d)\n", name, e.grabbed, e.held);
@@ -227,6 +231,7 @@ void GpuSolver::end_step(double dt)
     std::vector<double> pull_n;
     for (const auto& f : pull) pull_n.push_back(f.norm());
     for (const auto& e : grasp_.slip(pull_n)) {
+      if (!cfg_.diagnostics.enabled) continue;
       std::fprintf(stderr, "[stonefish_net] pinza %s: resbala con %.1f N (max_pull %.1f N), suelta %d nudos\n",
                    grippers_[e.gripper].name.c_str(), pull_n[e.gripper], grippers_[e.gripper].spec.max_pull, e.released);
     }

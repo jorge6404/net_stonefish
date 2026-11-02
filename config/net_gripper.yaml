@@ -3,11 +3,15 @@
 # refleja el cambio aquí.
 # Metros, kilogramos, NED del mundo de Stonefish (z hacia abajo).
 net:        {width: 5.0, height: 3.0, bar: 0.015, opening_deg: 90, twine_diameter: 0.0025, twine_density: 1140,
-             twine_modulus: 1.0e9, knot_diameter: 0.006}   # E del hilo (Pa; .inf = inextensible), Ø del nudo (m)
+             twine_modulus: 1.0e9, knot_diameter: 0.006,   # E del hilo (Pa; .inf = inextensible), Ø del nudo (m)
+             knot_stiffness: 0.05}   # rigidez del ángulo de cada esquina del rombo (N·m/rad; 0 = libre). Con la rosbag real encaja de 0,01 en adelante
 pose:       {x: 3.0, y_center: 0.0, z_top: 0.0}   # relinga superior en la superficie del agua (z = 0)
 # x: 3 m de la pared de aguas abajo (x = 6): sin fondeo al suelo, la corriente de 0,2 m/s lleva abajo la red ~1,5 m
+# Red irregular (opcional, desactivada): ángulo de reposo de los rombos (°, con knot_stiffness) y longitud de los
+# hilos (relativa) varían por zonas de unos `scale` m. 20° y 6 % es lo que más se parecía a la rosbag real
+# irregular:  {angle_deg: 20, length: 0.06, scale: 0.3, seed: 1}
 frame_rope: {diameter: 0.02, density: 950, modulus: 0.5e9}   # marco, orinques y fondeo; E (Pa; .inf = inextensible)
-leads:      {spacing: 0.5, mass: 0.5}
+leads:      {spacing: 0.5, mass: 0.91}   # 11 plomos en 5 m: unos 10 kg en total, como en la red real
 # enabled: false = sin boyas ni orinques (la red solo flota por su marco y lo que la sujeta el fondeo)
 buoys:      {enabled: false, spacing: 1.0, dropper: 0.20, mass: 0.5}   # boya hueca: ~5,8 kg de empuje neto
 # Fondeo de cada par de esquinas (bottom: inferiores; top: superiores, tensas: mantienen la red abierta a lo ancho).
@@ -59,7 +63,7 @@ grippers:
 # Baldosas dormidas: los cuadrados de tile_size m quietos y lejos de los robots se congelan y no se calculan.
 # Se duerme tras settle_time s con |v| < sleep_speed y a más de sleep_radius m de los robots; despierta a menos de
 # wake_radius m o si el nudo de fuera de un tramo de su borde se mueve más de wake_shift m desde que se durmió.
-sleep:      {enabled: true, tile_size: 0.5, wake_radius: 1.0, sleep_radius: 1.5, sleep_speed: 0.01, settle_time: 2.0,
+sleep:      {enabled: false, tile_size: 0.5, wake_radius: 1.0, sleep_radius: 1.5, sleep_speed: 0.01, settle_time: 2.0,
              wake_shift: 0.03}
 # Resumen por segundo en stderr (velocidades, inversiones de velocidad, nudos en el suelo, boyas)
-diagnostics: {enabled: true}
+diagnostics: {enabled: false}

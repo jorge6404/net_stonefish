@@ -165,7 +165,7 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  std::clog << "[stonefish_net] configuración de la red: " << netConfigPath
+  if (setup.cfg.diagnostics.enabled) std::clog << "[stonefish_net] configuración de la red: " << netConfigPath
             << "; física " << rate << " Hz, " << setup.cfg.solver.substeps << " subpasos de red por tick"
             << std::endl;
   std::shared_ptr<StonefishNetNode> node(new StonefishNetNode(scenarioPath, dataPath, std::move(setup),

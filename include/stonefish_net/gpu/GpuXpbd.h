@@ -88,12 +88,13 @@ private:
   void upload_params(const core::XpbdParams& p);  // al bloque Params, solo si han cambiado
   void bind_for_tick();                           // buffers, textura y cuántos hilos: en el primer subpaso
   void dispatch(const Program& prog, GLuint threads);
-  void dispatch_colors(const Program& prog);      // un lanzamiento por color de tramos
+  void dispatch_colors(const Program& prog, size_t colors);  // un lanzamiento por color, los `colors` primeros
   void clear_contact_memory();
 
   gl::GlComputeContext& gl_;
   GLuint nodes_ = 0, links_ = 0;
   std::vector<int> color_begin_;
+  size_t contact_colors_ = 0;  // los colores de los tramos que tocan los cuerpos (sin las diagonales)
   Program forces_, predict_, links_prog_, anchors_prog_, contact_nodes_, contact_links_, finish_, reduce_;
 
   // La red: fija, o reescrita por los shaders
